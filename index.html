@@ -428,10 +428,18 @@ async function syncFromHcp(){
         state: c.state, older_than_cutoff: c.olderThanCutoff, synced_at: new Date().toISOString()
       };
     });
+    // De-dupe by hcp_id before upserting — Postgres rejects an upsert batch
+    // that touches the same conflict key twice in one call (e.g. if HCP's
+    // pagination returned the same customer on two pages, or two profiles
+    // were accidentally tagged with the same ID number). Last occurrence wins.
+    var byId = {};
+    rows.forEach(function(r){ byId[r.hcp_id] = r; });
+    var dupeCount = rows.length - Object.keys(byId).length;
+    rows = Object.values(byId);
     if (!rows.length) { showToast('No GREC candidates found — check the sync function is deployed and tags are set on HCP.'); return; }
     var up = await sb.from('grec_customers').upsert(rows, { onConflict: 'hcp_id' });
     if (up.error) { showToast('Could not save synced customers: ' + up.error.message); return; }
-    showToast('Synced ' + rows.length + ' candidate' + (rows.length===1?'':'s') + ' from HCP.');
+    showToast('Synced ' + rows.length + ' candidate' + (rows.length===1?'':'s') + ' from HCP.' + (dupeCount>0 ? ' (' + dupeCount + ' duplicate tag' + (dupeCount===1?'':'s') + ' skipped.)' : ''));
     await showDashboard();
   } catch (e) {
     console.error(e);
