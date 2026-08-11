@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NAGeo GRECs</title>
+<link rel="icon" type="image/png" href="icons/icon-hub.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --navy:#060d1a;--navy2:#0d1f38;--navy3:#123055;
+  --green:#43a047;--green-light:#8fe396;--green-deep:#1b6b2e;
+  --text:#f4f7fc;--text-dim:rgba(244,247,252,.6);--text-dimmer:rgba(244,247,252,.36);
+  --glass:rgba(255,255,255,.05);--glass-border:rgba(255,255,255,.09);--glass-hover:rgba(255,255,255,.08);
+  --danger:#dc2626;--warn:#f59e0b;--radius:16px;
+}
+html,body{height:100%;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:
+    radial-gradient(ellipse 900px 600px at 10% -5%, rgba(67,160,71,.12), transparent 55%),
+    radial-gradient(ellipse 800px 700px at 100% 0%, rgba(18,48,85,.55), transparent 60%),
+    var(--navy);
+  color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font-family:inherit;}
+::-webkit-scrollbar{width:9px;height:9px;}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:8px;}
+
+/* ── Login ── */
+#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem;}
+.login-card{background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(20px);border-radius:24px;padding:2.6rem 2.2rem;width:400px;max-width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+.login-badge{height:52px;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;}
+.login-badge img{height:100%;width:auto;object-fit:contain;display:block;}
+.login-title{font-size:24px;font-weight:800;margin-bottom:4px;letter-spacing:-.3px;}
+.login-title span{color:var(--green-light);}
+.login-sub{font-size:14px;color:var(--text-dim);margin-bottom:1.8rem;}
+.pin-input{width:100%;padding:16px;border:1px solid var(--glass-border);border-radius:12px;font-size:24px;text-align:center;letter-spacing:10px;background:rgba(255,255,255,.04);color:var(--text);margin-bottom:14px;}
+.pin-input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(67,160,71,.2);}
+.login-btn{width:100%;padding:15px;background:var(--green);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;transition:background .15s;}
+.login-btn:hover{background:var(--green-deep);}
+.login-error{font-size:13px;color:#f87171;margin-top:12px;}
+
+/* ── App shell ── */
+#app{display:none;}
+.topbar{
+  display:flex;align-items:center;gap:14px;padding:14px 24px;flex-wrap:wrap;
+  background:linear-gradient(90deg,var(--navy2),var(--navy3));border-bottom:1px solid var(--glass-border);
+  position:sticky;top:0;z-index:50;
+}
+.topbar-brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;letter-spacing:-.2px;}
+.topbar-badge{height:32px;display:flex;align-items:center;flex-shrink:0;}
+.topbar-badge img{height:100%;width:auto;object-fit:contain;display:block;}
+.topbar-brand span{color:var(--green-light);}
+.spacer{flex:1;}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 16px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid var(--glass-border);background:var(--glass);color:var(--text);transition:all .15s;white-space:nowrap;}
+.btn:hover{background:var(--glass-hover);}
+.btn-accent{background:var(--green);border-color:var(--green);color:#fff;}
+.btn-accent:hover{background:var(--green-deep);}
+.btn-danger{background:var(--danger);border-color:var(--danger);color:#fff;}
+.btn-danger:hover{background:#b91c1c;}
+.btn-sm{padding:8px 12px;font-size:13px;}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+.topbar-user{font-size:13px;color:var(--text-dim);}
+
+/* ── Dashboard ── */
+#dashboardView{max-width:1200px;margin:0 auto;padding:2rem 1.25rem 4rem;}
+.dash-hdr{display:flex;align-items:center;gap:14px;margin-bottom:1.4rem;flex-wrap:wrap;}
+.dash-title{font-size:26px;font-weight:800;letter-spacing:-.5px;flex:1;}
+.dash-search{position:relative;width:260px;max-width:100%;}
+.dash-search input{width:100%;padding:11px 14px 11px 38px;border:1px solid var(--glass-border);border-radius:11px;background:var(--glass);color:var(--text);font-size:14px;}
+.dash-search input:focus{outline:none;border-color:var(--green);}
+.dash-search-icon{position:absolute;left:13px;top:50%;transform:translateY(-50%);opacity:.5;font-size:13px;}
+
+.stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:1.4rem;}
+.stat-card{background:var(--glass);border:1px solid var(--glass-border);border-radius:14px;padding:16px 18px;}
+.stat-num{font-size:26px;font-weight:800;letter-spacing:-.5px;}
+.stat-label{font-size:12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
+
+.filter-tabs{display:flex;gap:8px;margin-bottom:1.2rem;flex-wrap:wrap;}
+.filter-tab{padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--glass-border);background:var(--glass);color:var(--text-dim);transition:all .15s;}
+.filter-tab:hover{background:var(--glass-hover);}
+.filter-tab.active{background:var(--green);border-color:var(--green);color:#fff;}
+
+.customer-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+.customer-tile{
+  background:var(--glass);border:1px solid var(--glass-border);border-radius:16px;padding:18px 20px;cursor:pointer;
+  transition:all .15s;display:flex;flex-direction:column;gap:10px;
+}
+.customer-tile:hover{background:var(--glass-hover);border-color:rgba(67,160,71,.35);transform:translateY(-1px);}
+.tile-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.tile-name{font-size:16px;font-weight:700;}
+.tile-id{font-size:11.5px;color:var(--text-dimmer);margin-top:2px;}
+.tile-badges{display:flex;flex-wrap:wrap;gap:6px;}
+.pill{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:4px 9px;border-radius:999px;white-space:nowrap;}
+.pill-md{background:rgba(96,165,250,.16);color:#93c5fd;}
+.pill-va{background:rgba(67,160,71,.16);color:var(--green-light);}
+.pill-cutoff{background:rgba(245,158,11,.18);color:#fbbf24;}
+.pill-status{background:rgba(255,255,255,.08);color:var(--text-dim);}
+.pill-status.docs_in_progress{background:rgba(96,165,250,.16);color:#93c5fd;}
+.pill-status.ready_to_submit{background:rgba(67,160,71,.16);color:var(--green-light);}
+.pill-status.transferred{background:rgba(139,92,246,.18);color:#c4b5fd;}
+.tile-meta{font-size:12.5px;color:var(--text-dim);}
+.tile-docs{font-size:12px;color:var(--text-dimmer);}
+.dash-empty{padding:4rem 1rem;text-align:center;color:var(--text-dimmer);grid-column:1/-1;}
+.dash-empty-icon{font-size:48px;margin-bottom:14px;opacity:.5;}
+
+/* ── Detail view ── */
+#detailView{display:none;max-width:900px;margin:0 auto;padding:2rem 1.25rem 4rem;}
+.detail-back{display:flex;align-items:center;gap:6px;padding:9px 14px;border-radius:10px;background:var(--glass);border:1px solid var(--glass-border);color:var(--text);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:1.2rem;}
+.detail-back:hover{background:var(--glass-hover);}
+.detail-hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:1.6rem;flex-wrap:wrap;}
+.detail-name{font-size:26px;font-weight:800;letter-spacing:-.5px;}
+.detail-sub{font-size:13px;color:var(--text-dimmer);margin-top:4px;}
+.detail-badges{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
+.detail-actions{display:flex;gap:8px;flex-wrap:wrap;}
+
+.card{background:var(--glass);border:1px solid var(--glass-border);border-radius:16px;padding:1.4rem 1.5rem;margin-bottom:1.2rem;}
+.card-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--green-light);margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--glass-border);}
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.field-row{margin-bottom:0;}
+.field-label{font-size:12.5px;color:var(--text-dim);margin-bottom:5px;font-weight:600;display:block;}
+.field-input{width:100%;padding:10px 12px;border:1px solid var(--glass-border);border-radius:9px;background:rgba(255,255,255,.04);color:var(--text);font-size:14px;}
+.field-input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(67,160,71,.15);}
+
+.milestone-steps{display:flex;gap:8px;flex-wrap:wrap;}
+.milestone-step{flex:1;min-width:130px;padding:12px 14px;border-radius:11px;border:1px solid var(--glass-border);background:rgba(255,255,255,.03);text-align:center;font-size:12.5px;font-weight:700;color:var(--text-dimmer);}
+.milestone-step.done{background:rgba(67,160,71,.14);border-color:rgba(67,160,71,.35);color:var(--green-light);}
+.milestone-step.current{background:rgba(96,165,250,.14);border-color:rgba(96,165,250,.4);color:#93c5fd;}
+
+.doc-list{display:flex;flex-direction:column;gap:10px;}
+.doc-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:rgba(255,255,255,.03);border:1px solid var(--glass-border);}
+.doc-info{flex:1;min-width:0;}
+.doc-label{font-size:13.5px;font-weight:700;}
+.doc-file{font-size:12px;color:var(--text-dim);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.doc-empty{font-size:12px;color:var(--text-dimmer);margin-top:2px;}
+.doc-actions{display:flex;gap:6px;flex-shrink:0;}
+.file-upload-btn{position:relative;overflow:hidden;}
+.file-upload-btn input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;}
+
+/* ── Modal ── */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(6,13,26,.7);backdrop-filter:blur(4px);z-index:200;align-items:center;justify-content:center;padding:1rem;}
+.modal-bg.open{display:flex;}
+.modal{background:var(--navy2);border:1px solid var(--glass-border);border-radius:20px;padding:1.8rem;width:440px;max-width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5);}
+.modal-title{font-size:18px;font-weight:800;margin-bottom:.4rem;}
+.modal-warn{font-size:13px;color:var(--text-dim);margin-bottom:1.4rem;line-height:1.5;}
+.modal-row{margin-bottom:1rem;}
+.modal-label{font-size:13px;color:var(--text-dim);margin-bottom:6px;font-weight:600;display:flex;align-items:center;gap:8px;}
+.step-num{width:20px;height:20px;border-radius:50%;background:var(--glass);border:1px solid var(--glass-border);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;}
+.step-num.ok{background:var(--green);border-color:var(--green);color:#fff;}
+.modal-input{width:100%;padding:12px 14px;border:1px solid var(--glass-border);border-radius:10px;font-size:15px;background:rgba(255,255,255,.04);color:var(--text);}
+.modal-input:focus{outline:none;border-color:var(--green);}
+.modal-check{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--text-dim);line-height:1.5;cursor:pointer;}
+.modal-check input{margin-top:3px;flex-shrink:0;}
+.modal-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:1.4rem;}
+.modal-cancel{padding:11px 16px;border:none;border-radius:10px;background:var(--glass);color:var(--text-dim);cursor:pointer;font-size:14px;font-weight:600;}
+.modal-go{padding:11px 18px;border:none;border-radius:10px;background:var(--danger);color:#fff;cursor:pointer;font-size:14px;font-weight:700;}
+.modal-go:disabled{opacity:.35;cursor:not-allowed;}
+
+/* ── Toast ── */
+.toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--navy2);border:1px solid var(--glass-border);color:var(--text);padding:13px 22px;border-radius:999px;font-size:14px;font-weight:600;z-index:300;opacity:0;transition:opacity .3s;pointer-events:none;box-shadow:0 12px 30px rgba(0,0,0,.4);}
+.toast.show{opacity:1;}
+
+@media(max-width:700px){
+  .field-grid{grid-template-columns:1fr;}
+  .stats-bar{grid-template-columns:repeat(2,1fr);}
+}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-badge"><img src="icons/icon-hub.png" alt="NAGeo" onerror="this.parentElement.style.display='none'"></div>
+    <div class="login-title">NAGeo <span>GRECs</span></div>
+    <div class="login-sub">Geothermal REC tracker</div>
+    <input type="password" class="pin-input" id="pinInput" placeholder="PIN" maxlength="6" inputmode="numeric">
+    <button class="login-btn" onclick="doLogin()">Sign in</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div class="topbar-brand"><div class="topbar-badge"><img src="icons/icon-hub.png" alt="" onerror="this.parentElement.style.display='none'"></div>NAGeo <span>GRECs</span></div>
+    <div class="spacer"></div>
+    <div class="topbar-user">Hi, <strong id="topbarName"></strong></div>
+    <button class="btn btn-sm" onclick="doLogout()">Sign out</button>
+  </div>
+
+  <div id="dashboardView">
+    <div class="dash-hdr">
+      <div class="dash-title">GREC Customers</div>
+      <div class="dash-search">
+        <span class="dash-search-icon">🔍</span>
+        <input type="text" id="dashSearch" placeholder="Search by name or ID…" oninput="renderDashboard()">
+      </div>
+      <button class="btn" id="syncBtn" onclick="syncFromHcp()">⟳ Sync from HCP</button>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat-card"><div class="stat-num" id="statTotal">0</div><div class="stat-label">Total Candidates</div></div>
+      <div class="stat-card"><div class="stat-num" id="statMd">0</div><div class="stat-label">Maryland</div></div>
+      <div class="stat-card"><div class="stat-num" id="statVa">0</div><div class="stat-label">Virginia</div></div>
+      <div class="stat-card"><div class="stat-num" id="statCutoff">0</div><div class="stat-label">VA — Pre-8/16/22</div></div>
+    </div>
+
+    <div class="filter-tabs" id="filterTabs">
+      <div class="filter-tab active" data-filter="all" onclick="setFilter('all')">All</div>
+      <div class="filter-tab" data-filter="MD" onclick="setFilter('MD')">Maryland</div>
+      <div class="filter-tab" data-filter="VA" onclick="setFilter('VA')">Virginia</div>
+      <div class="filter-tab" data-filter="not_started" onclick="setFilter('not_started')">Not Started</div>
+      <div class="filter-tab" data-filter="ready_to_submit" onclick="setFilter('ready_to_submit')">Ready to Submit</div>
+      <div class="filter-tab" data-filter="transferred" onclick="setFilter('transferred')">Transferred</div>
+    </div>
+
+    <div class="customer-grid" id="customerGrid"></div>
+  </div>
+
+  <div id="detailView">
+    <button class="detail-back" onclick="backToDashboard()">← Back</button>
+    <div class="detail-hdr">
+      <div>
+        <div class="detail-name" id="detailName">—</div>
+        <div class="detail-sub" id="detailSub"></div>
+        <div class="detail-badges" id="detailBadges"></div>
+      </div>
+      <div class="detail-actions">
+        <button class="btn btn-sm" onclick="openFlett()">Open Flett Exchange ↗</button>
+        <button class="btn btn-accent btn-sm" id="transferBtn" onclick="openTransferModal()">Transfer to Flett Exchange</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Milestone</div>
+      <div class="milestone-steps" id="milestoneSteps"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Customer Info</div>
+      <div class="field-grid">
+        <div class="field-row"><label class="field-label">Customer Name</label><input class="field-input" id="fName" oninput="onDetailFieldInput()"></div>
+        <div class="field-row"><label class="field-label">HCP ID Number</label><input class="field-input" id="fId" disabled></div>
+        <div class="field-row"><label class="field-label">Email</label><input class="field-input" id="fEmail" oninput="onDetailFieldInput()"></div>
+        <div class="field-row"><label class="field-label">Phone</label><input class="field-input" id="fPhone" oninput="onDetailFieldInput()"></div>
+        <div class="field-row" style="grid-column:1/-1;"><label class="field-label">Address</label><input class="field-input" id="fAddress" oninput="onDetailFieldInput()"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Documents</div>
+      <div class="doc-list" id="docList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="transferModal">
+  <div class="modal">
+    <div class="modal-title">Transfer to Flett Exchange</div>
+    <div class="modal-warn">This sends <strong id="transferCustName">this customer</strong>'s information to Flett Exchange for GREC processing. This can't be undone from here — complete all three steps to confirm.</div>
+
+    <div class="modal-row">
+      <div class="modal-label"><span class="step-num" id="stepDot1">1</span> Re-enter your PIN</div>
+      <input type="password" class="modal-input" id="transferPin" maxlength="6" inputmode="numeric" oninput="updateTransferGate()">
+    </div>
+    <div class="modal-row">
+      <div class="modal-label"><span class="step-num" id="stepDot2">2</span> Confirm</div>
+      <label class="modal-check"><input type="checkbox" id="transferCheck" onchange="updateTransferGate()"> I confirm this customer's information and documents are ready to send to Flett Exchange, and that this action cannot be undone.</label>
+    </div>
+    <div class="modal-row">
+      <div class="modal-label"><span class="step-num" id="stepDot3">3</span> Type the customer's name exactly to confirm</div>
+      <input type="text" class="modal-input" id="transferName" oninput="updateTransferGate()" placeholder="">
+    </div>
+
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeTransferModal()">Cancel</button>
+      <button class="modal-go" id="transferGoBtn" disabled onclick="confirmTransfer()">Transfer</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Same Supabase project as every other NAGeo tool ──
+var SUPABASE_URL = "https://hpgwwegjsxyxovdattoc.supabase.co";
+var SUPABASE_KEY = "sb_publishable_D2PqYQoJjZ8koEM9NPvmeg_KB_Wa66H";
+var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Deploy nageo-grecs-hcp-sync-function.ts as an Edge Function, then paste its exact URL here.
+var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
+var FLETT_URL = "https://www.flettexchange.com/installer/login/";
+var STORAGE_BUCKET = "grec-documents";
+
+var DOC_TYPES = [
+  { key:"invoice_sow", label:"Project Paid Invoice / Statement of Work" },
+  { key:"permits", label:"Well & Mechanical Permits" },
+  { key:"engineering_manualj", label:"Engineering Study / Manual J" },
+  { key:"ahri_certificate", label:"AHRI Certificate of Product(s)" }
+];
+var MILESTONES = [
+  { key:"not_started", label:"Not Started" },
+  { key:"docs_in_progress", label:"Docs In Progress" },
+  { key:"ready_to_submit", label:"Ready to Submit" },
+  { key:"transferred", label:"Transferred" }
+];
+
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showToast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},3200); }
+
+// ── Auth (same users table as the rest of the NAGeo tools) ──
+var currentUser = null, users = [];
+async function loadUsers(){ var r = await sb.from('users').select('*').order('name'); users = r.data || []; }
+async function initAuth(){
+  var saved = localStorage.getItem('nageo_grecs_user');
+  if (saved) { currentUser = JSON.parse(saved); showApp(); }
+  else { await loadUsers(); }
+}
+async function doLogin(){
+  var pin = document.getElementById('pinInput').value.trim();
+  if (!pin) { document.getElementById('loginError').textContent = 'Enter your PIN.'; return; }
+  if (!users.length) await loadUsers();
+  var user = users.find(function(u){ return u.pin === pin; });
+  if (!user) { document.getElementById('loginError').textContent = 'PIN not recognized.'; document.getElementById('pinInput').value=''; return; }
+  currentUser = user;
+  localStorage.setItem('nageo_grecs_user', JSON.stringify(user));
+  showApp();
+}
+document.getElementById('pinInput').addEventListener('keydown', function(e){ if (e.key==='Enter') doLogin(); });
+function doLogout(){
+  currentUser = null; localStorage.removeItem('nageo_grecs_user');
+  document.getElementById('app').style.display='none';
+  document.getElementById('loginScreen').style.display='flex';
+  document.getElementById('pinInput').value='';
+}
+function showApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('topbarName').textContent = currentUser.name;
+  showDashboard();
+}
+
+// ══════════════════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════════════════
+var customers = [];
+var activeFilter = 'all';
+
+async function showDashboard(){
+  document.getElementById('detailView').style.display='none';
+  document.getElementById('dashboardView').style.display='block';
+  await loadCustomers();
+  await loadDocCounts();
+  renderDashboard();
+}
+async function loadCustomers(){
+  var r = await sb.from('grec_customers').select('*').order('customer_name');
+  if (r.error) { console.warn('[grecs] load failed', r.error); customers = []; showToast('Could not load customers: ' + r.error.message); return; }
+  customers = r.data || [];
+}
+function backToDashboard(){ showDashboard(); }
+
+function setFilter(f){
+  activeFilter = f;
+  document.querySelectorAll('.filter-tab').forEach(function(el){ el.classList.toggle('active', el.dataset.filter===f); });
+  renderDashboard();
+}
+
+function renderDashboard(){
+  var q = (document.getElementById('dashSearch').value||'').toLowerCase();
+  document.getElementById('statTotal').textContent = customers.length;
+  document.getElementById('statMd').textContent = customers.filter(function(c){return c.state==='MD';}).length;
+  document.getElementById('statVa').textContent = customers.filter(function(c){return c.state==='VA';}).length;
+  document.getElementById('statCutoff').textContent = customers.filter(function(c){return c.state==='VA' && c.older_than_cutoff;}).length;
+
+  var list = customers.filter(function(c){
+    if (q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(q)) return false;
+    if (activeFilter==='all') return true;
+    if (activeFilter==='MD' || activeFilter==='VA') return c.state===activeFilter;
+    return c.milestone_status===activeFilter;
+  });
+
+  var grid = document.getElementById('customerGrid');
+  if (!list.length) {
+    grid.innerHTML = '<div class="dash-empty"><div class="dash-empty-icon">📋</div>' + (customers.length ? 'No customers match this filter.' : 'No customers yet — click "Sync from HCP" to pull in GREC candidates.') + '</div>';
+    return;
+  }
+  grid.innerHTML = list.map(function(c){
+    var docCount = docCountByCustomer[c.id] || 0;
+    return '<div class="customer-tile" onclick="openCustomer(\''+c.id+'\')">'
+      + '<div class="tile-top"><div><div class="tile-name">'+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div></div>'
+      + '<div class="tile-badges">'
+        + '<span class="pill '+(c.state==='MD'?'pill-md':'pill-va')+'">'+esc(c.state)+'</span>'
+        + (c.older_than_cutoff ? '<span class="pill pill-cutoff">Pre-8/16/22</span>' : '')
+        + '<span class="pill pill-status '+esc(c.milestone_status)+'">'+esc(milestoneLabel(c.milestone_status))+'</span>'
+      + '</div>'
+      + '<div class="tile-meta">'+esc(c.address||'No address on file')+'</div>'
+      + '<div class="tile-docs">'+docCount+'/4 documents uploaded</div>'
+      + '</div>';
+  }).join('');
+}
+function milestoneLabel(key){ var m = MILESTONES.find(function(x){return x.key===key;}); return m ? m.label : key; }
+
+// Doc counts per customer, loaded alongside the dashboard so tiles can show progress without a query-per-tile.
+var docCountByCustomer = {};
+async function loadDocCounts(){
+  var r = await sb.from('grec_documents').select('customer_id');
+  docCountByCustomer = {};
+  (r.data||[]).forEach(function(d){ docCountByCustomer[d.customer_id] = (docCountByCustomer[d.customer_id]||0) + 1; });
+}
+
+// ── Sync from HCP — pulls the full candidate list from the Edge Function and
+// upserts it into grec_customers. Never touches milestone_status on existing
+// rows (that field is intentionally left out of the upsert payload). ──
+async function syncFromHcp(){
+  var btn = document.getElementById('syncBtn');
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Syncing…';
+  try {
+    var res = await fetch(GREC_SYNC_URL, { headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY } });
+    var data = await res.json();
+    if (data.error) { showToast('Sync failed: ' + data.error); return; }
+    var rows = (data.customers||[]).map(function(c){
+      return {
+        hcp_id: c.hcpId, id_prefix: c.idPrefix, id_number: c.idNumber,
+        customer_name: c.name, email: c.email, phone: c.phone, address: c.address,
+        state: c.state, older_than_cutoff: c.olderThanCutoff, synced_at: new Date().toISOString()
+      };
+    });
+    if (!rows.length) { showToast('No GREC candidates found — check the sync function is deployed and tags are set on HCP.'); return; }
+    var up = await sb.from('grec_customers').upsert(rows, { onConflict: 'hcp_id' });
+    if (up.error) { showToast('Could not save synced customers: ' + up.error.message); return; }
+    showToast('Synced ' + rows.length + ' candidate' + (rows.length===1?'':'s') + ' from HCP.');
+    await showDashboard();
+  } catch (e) {
+    console.error(e);
+    showToast('Sync failed — see console.');
+  }
+  btn.disabled = false; btn.textContent = orig;
+}
+
+// ══════════════════════════════════════════════════════════
+// DETAIL VIEW
+// ══════════════════════════════════════════════════════════
+var currentCustomer = null;
+var documents = [];
+
+async function openCustomer(id){
+  var r = await sb.from('grec_customers').select('*').eq('id', id).single();
+  if (r.error || !r.data) { showToast('Could not open that customer.'); return; }
+  currentCustomer = r.data;
+  await loadDocuments();
+
+  document.getElementById('dashboardView').style.display='none';
+  document.getElementById('detailView').style.display='block';
+  renderDetail();
+}
+async function loadDocuments(){
+  var r = await sb.from('grec_documents').select('*').eq('customer_id', currentCustomer.id).order('uploaded_at');
+  documents = r.data || [];
+}
+
+function renderDetail(){
+  document.getElementById('detailName').textContent = currentCustomer.customer_name || 'Unknown';
+  document.getElementById('detailSub').textContent = 'HCP ID ' + (currentCustomer.hcp_id||'—');
+  document.getElementById('detailBadges').innerHTML =
+    '<span class="pill '+(currentCustomer.state==='MD'?'pill-md':'pill-va')+'">'+esc(currentCustomer.state)+'</span>'
+    + (currentCustomer.older_than_cutoff ? '<span class="pill pill-cutoff">Pre-8/16/22</span>' : '')
+    + '<span class="pill pill-status '+esc(currentCustomer.milestone_status)+'">'+esc(milestoneLabel(currentCustomer.milestone_status))+'</span>';
+
+  document.getElementById('fName').value = currentCustomer.customer_name || '';
+  document.getElementById('fId').value = currentCustomer.hcp_id || '';
+  document.getElementById('fEmail').value = currentCustomer.email || '';
+  document.getElementById('fPhone').value = currentCustomer.phone || '';
+  document.getElementById('fAddress').value = currentCustomer.address || '';
+
+  var isTransferred = currentCustomer.milestone_status === 'transferred';
+  document.getElementById('transferBtn').disabled = isTransferred;
+  document.getElementById('transferBtn').textContent = isTransferred ? 'Already Transferred' : 'Transfer to Flett Exchange';
+
+  var curIdx = MILESTONES.findIndex(function(m){return m.key===currentCustomer.milestone_status;});
+  document.getElementById('milestoneSteps').innerHTML = MILESTONES.map(function(m, i){
+    var cls = i < curIdx ? 'done' : (i === curIdx ? 'current' : '');
+    return '<div class="milestone-step '+cls+'">'+esc(m.label)+'</div>';
+  }).join('');
+
+  document.getElementById('docList').innerHTML = DOC_TYPES.map(function(dt){
+    var doc = documents.find(function(d){ return d.doc_type===dt.key; });
+    return '<div class="doc-row">'
+      + '<div class="doc-info"><div class="doc-label">'+esc(dt.label)+'</div>'
+      + (doc ? '<div class="doc-file">📄 '+esc(doc.file_name)+'</div>' : '<div class="doc-empty">No file uploaded yet</div>')
+      + '</div>'
+      + '<div class="doc-actions">'
+        + (doc ? '<button class="btn btn-sm" onclick="downloadDoc(\''+doc.id+'\')">Download</button>' : '')
+        + '<button class="btn btn-sm file-upload-btn">'+(doc?'Replace':'Upload')+'<input type="file" onchange="uploadDoc(\''+dt.key+'\', this.files[0])"></button>'
+        + (doc ? '<button class="btn btn-sm btn-danger" onclick="deleteDoc(\''+doc.id+'\')">✕</button>' : '')
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+var detailDirty = false;
+function onDetailFieldInput(){ detailDirty = true; clearTimeout(window._detailSaveTimer); window._detailSaveTimer = setTimeout(saveDetailFields, 800); }
+async function saveDetailFields(){
+  if (!detailDirty || !currentCustomer) return;
+  var updates = {
+    customer_name: document.getElementById('fName').value.trim(),
+    email: document.getElementById('fEmail').value.trim(),
+    phone: document.getElementById('fPhone').value.trim(),
+    address: document.getElementById('fAddress').value.trim(),
+    updated_at: new Date().toISOString()
+  };
+  var r = await sb.from('grec_customers').update(updates).eq('id', currentCustomer.id);
+  if (r.error) { console.warn('[grecs] save failed', r.error); showToast('Could not save changes: ' + r.error.message); return; }
+  Object.assign(currentCustomer, updates);
+  detailDirty = false;
+  document.getElementById('detailName').textContent = currentCustomer.customer_name || 'Unknown';
+}
+
+// ── Documents ──
+async function uploadDoc(docType, file){
+  if (!file || !currentCustomer) return;
+  showToast('Uploading…');
+  var path = currentCustomer.id + '/' + docType + '-' + Date.now() + '-' + file.name.replace(/[^a-z0-9.\-_]+/gi,'_');
+  var up = await sb.storage.from(STORAGE_BUCKET).upload(path, file, { upsert:true });
+  if (up.error) { showToast('Upload failed: ' + up.error.message); return; }
+
+  var old = documents.filter(function(d){ return d.doc_type===docType; });
+  for (var i=0; i<old.length; i++) {
+    await sb.storage.from(STORAGE_BUCKET).remove([old[i].file_path]);
+    await sb.from('grec_documents').delete().eq('id', old[i].id);
+  }
+  var ins = await sb.from('grec_documents').insert({
+    customer_id: currentCustomer.id, doc_type: docType, file_path: path, file_name: file.name, uploaded_by: currentUser.name
+  });
+  if (ins.error) { showToast('Could not save document record: ' + ins.error.message); return; }
+
+  await loadDocuments();
+  await recomputeMilestone();
+  renderDetail();
+  showToast('Document uploaded.');
+}
+async function downloadDoc(docId){
+  var doc = documents.find(function(d){ return d.id===docId; });
+  if (!doc) return;
+  var r = await sb.storage.from(STORAGE_BUCKET).createSignedUrl(doc.file_path, 3600);
+  if (r.error) { showToast('Could not open file: ' + r.error.message); return; }
+  window.open(r.data.signedUrl, '_blank');
+}
+async function deleteDoc(docId){
+  var doc = documents.find(function(d){ return d.id===docId; });
+  if (!doc) return;
+  if (!confirm('Remove ' + doc.file_name + '?')) return;
+  await sb.storage.from(STORAGE_BUCKET).remove([doc.file_path]);
+  await sb.from('grec_documents').delete().eq('id', docId);
+  await loadDocuments();
+  await recomputeMilestone();
+  renderDetail();
+  showToast('Document removed.');
+}
+
+// Milestone auto-advances based on how many of the 4 documents are on file.
+// Never overrides a "transferred" status.
+async function recomputeMilestone(){
+  if (!currentCustomer || currentCustomer.milestone_status === 'transferred') return;
+  var count = documents.length;
+  var status = count===0 ? 'not_started' : (count<4 ? 'docs_in_progress' : 'ready_to_submit');
+  if (status !== currentCustomer.milestone_status) {
+    await sb.from('grec_customers').update({ milestone_status: status, updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
+    currentCustomer.milestone_status = status;
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// TRANSFER TO FLETT EXCHANGE — 3-step same-user confirmation.
+// No live Flett API connection yet (that's a future integration once Flett
+// issues API credentials) — this records the transfer locally and opens
+// Flett's site in a new tab so the details can be entered there today.
+// ══════════════════════════════════════════════════════════
+function openFlett(){ window.open(FLETT_URL, '_blank'); }
+
+function openTransferModal(){
+  if (!currentCustomer) return;
+  document.getElementById('transferCustName').textContent = currentCustomer.customer_name || 'this customer';
+  document.getElementById('transferPin').value = '';
+  document.getElementById('transferCheck').checked = false;
+  document.getElementById('transferName').value = '';
+  document.getElementById('transferName').placeholder = currentCustomer.customer_name || '';
+  updateTransferGate();
+  document.getElementById('transferModal').classList.add('open');
+}
+function closeTransferModal(){ document.getElementById('transferModal').classList.remove('open'); }
+
+function updateTransferGate(){
+  var pinOk = document.getElementById('transferPin').value.trim() === (currentUser ? currentUser.pin : null);
+  var checkOk = document.getElementById('transferCheck').checked;
+  var nameOk = document.getElementById('transferName').value.trim().toLowerCase() === (currentCustomer ? (currentCustomer.customer_name||'').trim().toLowerCase() : '__none__') && !!(currentCustomer && currentCustomer.customer_name);
+
+  document.getElementById('stepDot1').classList.toggle('ok', pinOk);
+  document.getElementById('stepDot2').classList.toggle('ok', checkOk);
+  document.getElementById('stepDot3').classList.toggle('ok', nameOk);
+
+  document.getElementById('transferGoBtn').disabled = !(pinOk && checkOk && nameOk);
+}
+
+async function confirmTransfer(){
+  if (!currentCustomer) return;
+  var btn = document.getElementById('transferGoBtn');
+  btn.disabled = true; btn.textContent = 'Transferring…';
+
+  var ins = await sb.from('grec_transfers').insert({ customer_id: currentCustomer.id, transferred_by: currentUser.name, status: 'transferred' });
+  if (ins.error) { showToast('Could not record transfer: ' + ins.error.message); btn.disabled=false; btn.textContent='Transfer'; return; }
+
+  var upd = await sb.from('grec_customers').update({ milestone_status: 'transferred', updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
+  if (upd.error) { showToast('Transfer logged, but could not update status: ' + upd.error.message); }
+  currentCustomer.milestone_status = 'transferred';
+
+  btn.textContent = 'Transfer';
+  closeTransferModal();
+  renderDetail();
+  showToast('Transferred — opening Flett Exchange in a new tab.');
+  window.open(FLETT_URL, '_blank');
+}
+
+// ── Boot ──
+initAuth();
+</script>
+</body>
+</html>
