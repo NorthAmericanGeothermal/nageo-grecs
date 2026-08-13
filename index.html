@@ -297,10 +297,10 @@ button,input,select,textarea{font-family:inherit;}
       </div>
       <div class="rte-editor" contenteditable="true" id="emailBodyEditor"></div>
     </div>
-    <div class="modal-warn" id="emailSendNote">For now this opens a pre-filled Gmail compose window — review it and click Send yourself in Gmail. One-click sending straight from here is coming once the Gmail connection is finished.</div>
+    <div class="modal-warn" id="emailSendNote">Checking your Gmail connection…</div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeEmailModal()">Cancel</button>
-      <button class="modal-go" id="emailSendBtn" onclick="sendEmail()" style="background:var(--green);">Open in Gmail →</button>
+      <button class="modal-go" id="emailSendBtn" onclick="sendEmail()" style="background:var(--green);" disabled>…</button>
     </div>
   </div>
 </div>
@@ -341,6 +341,11 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Deploy nageo-grecs-hcp-sync-function.ts as an Edge Function, then paste its exact URL here.
 var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
+// Sends through whichever rep is logged in, via the Gmail account they
+// already connected through the Leads tool's Gmail sync (same gmail_accounts
+// table). See grec-send-email-function.ts for deployment + the one-time
+// gmail.send scope addition it depends on.
+var GREC_SEND_EMAIL_URL = SUPABASE_URL + "/functions/v1/grec-send-email";
 var STORAGE_BUCKET = "grec-documents";
 
 var DOC_TYPES = [
@@ -673,18 +678,50 @@ function mergeHtml(str, customer){ return String(str||'').replace(/\{\{\s*name\s
 
 // ══════════════════════════════════════════════════════════
 // SEND EMAIL
-// Interim implementation: opens a pre-filled Gmail compose window (plain
-// text only — Gmail's compose URL can't carry bold/bullets) and logs the
-// send to the customer's activity feed. This is a placeholder for true
-// one-click sending through the Gmail API/OAuth connection tied to whoever
-// is logged in — swap the body of sendEmail() out once that's wired up.
+// If the logged-in rep has already connected Gmail (same connection used by
+// the Leads tool's inbox sync), this sends directly through the Gmail API —
+// full HTML formatting kept, one click, no manual step. If not connected
+// yet, it falls back to opening a pre-filled Gmail compose window (plain
+// text only) that the rep sends manually. Either way, the send gets logged
+// to this customer's activity feed.
 // ══════════════════════════════════════════════════════════
-function openEmailModal(){
+var gmailConnected = false;
+var gmailConnectedAs = null;
+
+async function openEmailModal(){
   if (!currentCustomer) return;
   document.getElementById('emailTo').value = currentCustomer.email || '';
   document.getElementById('emailSubject').value = mergeText(GREC_SETTINGS.email_subject, currentCustomer);
   document.getElementById('emailBodyEditor').innerHTML = mergeHtml(GREC_SETTINGS.email_body_html, currentCustomer);
   document.getElementById('emailModal').classList.add('open');
+
+  var note = document.getElementById('emailSendNote');
+  var btn = document.getElementById('emailSendBtn');
+  btn.disabled = true; btn.textContent = '…';
+  note.textContent = 'Checking your Gmail connection…';
+
+  try {
+    var res = await fetch(GREC_SEND_EMAIL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ action: 'check_connection', rep_id: currentUser.id })
+    });
+    var data = await res.json();
+    gmailConnected = !!(data && data.connected);
+    gmailConnectedAs = data && data.google_email;
+  } catch (e) {
+    console.warn('[grecs] gmail connection check failed', e);
+    gmailConnected = false;
+  }
+
+  btn.disabled = false;
+  if (gmailConnected) {
+    note.textContent = 'Sends directly through your connected Gmail (' + gmailConnectedAs + ').';
+    btn.textContent = 'Send Email';
+  } else {
+    note.textContent = 'Your Gmail isn\'t connected yet, so this opens a pre-filled Gmail compose window instead — review it and click Send yourself in Gmail.';
+    btn.textContent = 'Open in Gmail →';
+  }
 }
 function closeEmailModal(){ document.getElementById('emailModal').classList.remove('open'); }
 
@@ -704,20 +741,40 @@ async function sendEmail(){
   var bodyHtml = document.getElementById('emailBodyEditor').innerHTML;
   if (!to) { showToast('Enter a "To" email address.'); return; }
 
-  var plainBody = htmlToPlainForGmail(bodyHtml);
-  var gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to)
-    + '&su=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(plainBody);
-  window.open(gmailUrl, '_blank');
+  var btn = document.getElementById('emailSendBtn');
+  btn.disabled = true; var origText = btn.textContent; btn.textContent = 'Sending…';
+
+  var activityMessage = subject || '(no subject)';
+
+  if (gmailConnected) {
+    try {
+      var res = await fetch(GREC_SEND_EMAIL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+        body: JSON.stringify({ action: 'send', rep_id: currentUser.id, to: to, subject: subject, html_body: bodyHtml })
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) { showToast('Send failed: ' + (data.error || 'unknown error')); btn.disabled=false; btn.textContent=origText; return; }
+    } catch (e) {
+      showToast('Send failed — see console.'); console.error(e); btn.disabled=false; btn.textContent=origText; return;
+    }
+  } else {
+    var plainBody = htmlToPlainForGmail(bodyHtml);
+    var gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to)
+      + '&su=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(plainBody);
+    window.open(gmailUrl, '_blank');
+  }
 
   var ins = await sb.from('grec_activity').insert({
-    customer_id: currentCustomer.id, type: 'email_sent', message: subject || '(no subject)', created_by: currentUser.name
+    customer_id: currentCustomer.id, type: 'email_sent', message: activityMessage, created_by: currentUser.name
   });
   if (ins.error) { console.warn('[grecs] activity log failed', ins.error); }
 
+  btn.disabled = false; btn.textContent = origText;
   closeEmailModal();
   await loadActivity();
   renderActivity();
-  showToast('Opened in Gmail — logged to this customer\'s activity.');
+  showToast(gmailConnected ? 'Email sent.' : 'Opened in Gmail — logged to activity.');
 }
 
 // ══════════════════════════════════════════════════════════
