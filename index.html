@@ -98,8 +98,7 @@ button,input,select,textarea{font-family:inherit;}
 .pill-va{background:rgba(67,160,71,.16);color:var(--green-light);}
 .pill-cutoff{background:rgba(245,158,11,.18);color:#fbbf24;}
 .pill-status{background:rgba(255,255,255,.08);color:var(--text-dim);}
-.pill-status.docs_in_progress{background:rgba(96,165,250,.16);color:#93c5fd;}
-.pill-status.ready_to_submit{background:rgba(67,160,71,.16);color:var(--green-light);}
+.pill-status.emailed{background:rgba(67,160,71,.16);color:var(--green-light);}
 .tile-meta{font-size:12.5px;color:var(--text-dim);}
 .tile-docs{font-size:12px;color:var(--text-dimmer);}
 .dash-empty{padding:4rem 1rem;text-align:center;color:var(--text-dimmer);grid-column:1/-1;}
@@ -124,7 +123,8 @@ button,input,select,textarea{font-family:inherit;}
 .field-input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(67,160,71,.15);}
 
 .milestone-steps{display:flex;gap:8px;flex-wrap:wrap;}
-.milestone-step{flex:1;min-width:130px;padding:12px 14px;border-radius:11px;border:1px solid var(--glass-border);background:rgba(255,255,255,.03);text-align:center;font-size:12.5px;font-weight:700;color:var(--text-dimmer);}
+.milestone-step{flex:1;min-width:130px;padding:12px 14px;border-radius:11px;border:1px solid var(--glass-border);background:rgba(255,255,255,.03);text-align:center;font-size:12.5px;font-weight:700;color:var(--text-dimmer);cursor:pointer;transition:background .15s,border-color .15s;}
+.milestone-step:hover{background:rgba(255,255,255,.07);}
 .milestone-step.done{background:rgba(67,160,71,.14);border-color:rgba(67,160,71,.35);color:var(--green-light);}
 .milestone-step.current{background:rgba(96,165,250,.14);border-color:rgba(96,165,250,.4);color:#93c5fd;}
 
@@ -238,7 +238,7 @@ button,input,select,textarea{font-family:inherit;}
       <div class="filter-tab" data-filter="MD" onclick="setFilter('MD')">Maryland</div>
       <div class="filter-tab" data-filter="VA" onclick="setFilter('VA')">Virginia</div>
       <div class="filter-tab" data-filter="not_started" onclick="setFilter('not_started')">Not Started</div>
-      <div class="filter-tab" data-filter="ready_to_submit" onclick="setFilter('ready_to_submit')">Ready to Submit</div>
+      <div class="filter-tab" data-filter="emailed" onclick="setFilter('emailed')">Emailed</div>
     </div>
 
     <div class="customer-grid" id="customerGrid"></div>
@@ -276,6 +276,7 @@ button,input,select,textarea{font-family:inherit;}
     <div class="card">
       <div class="card-title">Documents</div>
       <div class="doc-list" id="docList"></div>
+      <button class="btn btn-sm file-upload-btn" style="margin-top:10px;">+ Upload Document<input type="file" onchange="uploadDoc(this.files[0]); this.value='';"></button>
     </div>
 
     <div class="card">
@@ -392,16 +393,9 @@ var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
 var GREC_SEND_EMAIL_URL = SUPABASE_URL + "/functions/v1/grec-send-email";
 var STORAGE_BUCKET = "grec-documents";
 
-var DOC_TYPES = [
-  { key:"invoice_sow", label:"Project Paid Invoice / Statement of Work" },
-  { key:"permits", label:"Well & Mechanical Permits" },
-  { key:"engineering_manualj", label:"Engineering Study / Manual J" },
-  { key:"ahri_certificate", label:"AHRI Certificate of Product(s)" }
-];
 var MILESTONES = [
   { key:"not_started", label:"Not Started" },
-  { key:"docs_in_progress", label:"Docs In Progress" },
-  { key:"ready_to_submit", label:"Ready to Submit" }
+  { key:"emailed", label:"Emailed" }
 ];
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -496,7 +490,7 @@ function renderDashboard(){
         + '<span class="pill pill-status '+esc(c.milestone_status)+'">'+esc(milestoneLabel(c.milestone_status))+'</span>'
       + '</div>'
       + '<div class="tile-meta">'+esc(c.address||'No address on file')+'</div>'
-      + '<div class="tile-docs">'+docCount+'/4 documents uploaded</div>'
+      + '<div class="tile-docs">'+docCount+' document'+(docCount===1?'':'s')+' uploaded</div>'
       + '</div>';
   }).join('');
 }
@@ -587,22 +581,30 @@ function renderDetail(){
   var curIdx = MILESTONES.findIndex(function(m){return m.key===currentCustomer.milestone_status;});
   document.getElementById('milestoneSteps').innerHTML = MILESTONES.map(function(m, i){
     var cls = i < curIdx ? 'done' : (i === curIdx ? 'current' : '');
-    return '<div class="milestone-step '+cls+'">'+esc(m.label)+'</div>';
+    return '<div class="milestone-step '+cls+'" onclick="setMilestone(\''+m.key+'\')" title="Click to set">'+esc(m.label)+'</div>';
   }).join('');
 
-  document.getElementById('docList').innerHTML = DOC_TYPES.map(function(dt){
-    var doc = documents.find(function(d){ return d.doc_type===dt.key; });
-    return '<div class="doc-row">'
-      + '<div class="doc-info"><div class="doc-label">'+esc(dt.label)+'</div>'
-      + (doc ? '<div class="doc-file">📄 '+esc(doc.file_name)+'</div>' : '<div class="doc-empty">No file uploaded yet</div>')
-      + '</div>'
-      + '<div class="doc-actions">'
-        + (doc ? '<button class="btn btn-sm" onclick="downloadDoc(\''+doc.id+'\')">Download</button>' : '')
-        + '<button class="btn btn-sm file-upload-btn">'+(doc?'Replace':'Upload')+'<input type="file" onchange="uploadDoc(\''+dt.key+'\', this.files[0])"></button>'
-        + (doc ? '<button class="btn btn-sm btn-danger" onclick="deleteDoc(\''+doc.id+'\')">✕</button>' : '')
-      + '</div>'
-      + '</div>';
-  }).join('');
+  document.getElementById('docList').innerHTML = documents.length
+    ? documents.map(function(doc){
+        return '<div class="doc-row">'
+          + '<div class="doc-info"><div class="doc-label">📄 '+esc(doc.file_name)+'</div>'
+          + '<div class="doc-file">uploaded'+(doc.uploaded_by ? ' by '+esc(doc.uploaded_by) : '')+(doc.uploaded_at ? ' · '+timeAgo(doc.uploaded_at) : '')+'</div>'
+          + '</div>'
+          + '<div class="doc-actions">'
+            + '<button class="btn btn-sm" onclick="downloadDoc(\''+doc.id+'\')">Download</button>'
+            + '<button class="btn btn-sm btn-danger" onclick="deleteDoc(\''+doc.id+'\')">✕</button>'
+          + '</div>'
+          + '</div>';
+      }).join('')
+    : '<div class="doc-empty">No documents uploaded yet.</div>';
+}
+
+async function setMilestone(status){
+  if (!currentCustomer || status === currentCustomer.milestone_status) return;
+  var r = await sb.from('grec_customers').update({ milestone_status: status, updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
+  if (r.error) { showToast('Could not update milestone: ' + r.error.message); return; }
+  currentCustomer.milestone_status = status;
+  renderDetail();
 }
 
 var detailDirty = false;
@@ -623,26 +625,22 @@ async function saveDetailFields(){
   document.getElementById('detailName').textContent = currentCustomer.customer_name || 'Unknown';
 }
 
-// ── Documents ──
-async function uploadDoc(docType, file){
+// ── Documents ── generic upload list now — no fixed types required. The
+// customer's own responsibility once emailed, this is just a place to keep
+// anything they (or you) send over.
+async function uploadDoc(file){
   if (!file || !currentCustomer) return;
   showToast('Uploading…');
-  var path = currentCustomer.id + '/' + docType + '-' + Date.now() + '-' + file.name.replace(/[^a-z0-9.\-_]+/gi,'_');
+  var path = currentCustomer.id + '/' + Date.now() + '-' + file.name.replace(/[^a-z0-9.\-_]+/gi,'_');
   var up = await sb.storage.from(STORAGE_BUCKET).upload(path, file, { upsert:true });
   if (up.error) { showToast('Upload failed: ' + up.error.message); return; }
 
-  var old = documents.filter(function(d){ return d.doc_type===docType; });
-  for (var i=0; i<old.length; i++) {
-    await sb.storage.from(STORAGE_BUCKET).remove([old[i].file_path]);
-    await sb.from('grec_documents').delete().eq('id', old[i].id);
-  }
   var ins = await sb.from('grec_documents').insert({
-    customer_id: currentCustomer.id, doc_type: docType, file_path: path, file_name: file.name, uploaded_by: currentUser.name
+    customer_id: currentCustomer.id, file_path: path, file_name: file.name, uploaded_by: currentUser.name
   });
   if (ins.error) { showToast('Could not save document record: ' + ins.error.message); return; }
 
   await loadDocuments();
-  await recomputeMilestone();
   renderDetail();
   showToast('Document uploaded.');
 }
@@ -660,20 +658,8 @@ async function deleteDoc(docId){
   await sb.storage.from(STORAGE_BUCKET).remove([doc.file_path]);
   await sb.from('grec_documents').delete().eq('id', docId);
   await loadDocuments();
-  await recomputeMilestone();
   renderDetail();
   showToast('Document removed.');
-}
-
-// Milestone auto-advances based on how many of the 4 documents are on file.
-async function recomputeMilestone(){
-  if (!currentCustomer) return;
-  var count = documents.length;
-  var status = count===0 ? 'not_started' : (count<4 ? 'docs_in_progress' : 'ready_to_submit');
-  if (status !== currentCustomer.milestone_status) {
-    await sb.from('grec_customers').update({ milestone_status: status, updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
-    currentCustomer.milestone_status = status;
-  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -890,10 +876,16 @@ async function sendEmail(){
   var ins = await sb.from('grec_activity').insert(activityRow);
   if (ins.error) { console.warn('[grecs] activity log failed', ins.error); }
 
+  if (currentCustomer.milestone_status === 'not_started') {
+    var mUpd = await sb.from('grec_customers').update({ milestone_status: 'emailed', updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
+    if (!mUpd.error) currentCustomer.milestone_status = 'emailed';
+  }
+
   btn.disabled = false; btn.textContent = origText;
   closeEmailModal();
   await loadActivity();
   renderActivity();
+  renderDetail();
   showToast(fromEmail ? 'Email sent.' : 'Opened in Gmail — logged to activity.');
 }
 
