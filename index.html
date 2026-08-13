@@ -366,7 +366,7 @@ button,input,select,textarea{font-family:inherit;}
 
 <div class="modal-bg" id="viewEmailModal">
   <div class="modal" style="width:580px;max-height:88vh;overflow-y:auto;">
-    <div class="modal-title">Sent Email</div>
+    <div class="modal-title" id="viewEmailModalTitle">Sent Email</div>
     <div class="merge-hint" id="viewEmailMeta"></div>
     <div class="rte-editor" id="viewEmailBody" style="cursor:default;"></div>
     <div class="modal-btns">
@@ -933,6 +933,7 @@ function renderActivity(){
       + '<div class="activity-badges">'
         + (a.type==='email_sent' && a.email_html ? '<button class="btn btn-sm" onclick="openViewEmail(\''+a.id+'\')">View email</button>' : '')
         + (canCheckReply ? '<button class="btn btn-sm" onclick="checkReplyForActivity(\''+a.id+'\')">Check for reply</button>' : '')
+        + (a.reply_status==='replied' && a.reply_html ? '<button class="btn btn-sm" onclick="openViewReply(\''+a.id+'\')">View reply</button>' : '')
         + replyBadge
       + '</div>'
       + '</div></div>';
@@ -942,8 +943,17 @@ function renderActivity(){
 function openViewEmail(activityId){
   var a = activity.find(function(x){ return x.id===activityId; });
   if (!a) return;
+  document.getElementById('viewEmailModalTitle').textContent = 'Sent Email';
   document.getElementById('viewEmailMeta').textContent = 'To ' + (a.email_to||'—') + (a.sent_from_email ? ' · from ' + a.sent_from_email : '') + ' · ' + timeAgo(a.created_at);
   document.getElementById('viewEmailBody').innerHTML = a.email_html || '<em>No content saved.</em>';
+  document.getElementById('viewEmailModal').classList.add('open');
+}
+function openViewReply(activityId){
+  var a = activity.find(function(x){ return x.id===activityId; });
+  if (!a) return;
+  document.getElementById('viewEmailModalTitle').textContent = 'Their Reply';
+  document.getElementById('viewEmailMeta').textContent = (a.reply_from ? 'From ' + a.reply_from : 'From ' + (a.email_to||'—')) + (a.reply_checked_at ? ' · seen ' + timeAgo(a.reply_checked_at) : '');
+  document.getElementById('viewEmailBody').innerHTML = a.reply_html || '<em>No reply content saved — try "Check for reply" again.</em>';
   document.getElementById('viewEmailModal').classList.add('open');
 }
 function closeViewEmailModal(){ document.getElementById('viewEmailModal').classList.remove('open'); }
@@ -962,8 +972,14 @@ async function checkReplyForActivity(activityId){
     if (!res.ok || data.error) { showToast('Could not check: ' + (data.error || 'unknown error')); return; }
     var status = data.replied ? 'replied' : 'no_reply';
     var checkedAt = new Date().toISOString();
-    await sb.from('grec_activity').update({ reply_status: status, reply_checked_at: checkedAt }).eq('id', activityId);
+    var updateRow = { reply_status: status, reply_checked_at: checkedAt };
+    if (data.replied) {
+      updateRow.reply_from = data.latest_from || null;
+      updateRow.reply_html = data.latest_html || null;
+    }
+    await sb.from('grec_activity').update(updateRow).eq('id', activityId);
     a.reply_status = status; a.reply_checked_at = checkedAt;
+    if (data.replied) { a.reply_from = updateRow.reply_from; a.reply_html = updateRow.reply_html; }
     renderActivity();
     showToast(data.replied ? 'They\'ve replied.' : 'No reply yet.');
   } catch (e) {
