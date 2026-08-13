@@ -683,11 +683,7 @@ async function recomputeMilestone(){
 // login if any accounts are already connected. Uses the same gmail_accounts
 // table the Leads tool's Gmail sync already built.
 // ══════════════════════════════════════════════════════════
-// TODO: paste your Google OAuth Client ID here to enable the "Connect
-// Gmail" button below (Client ID is safe to expose client-side — it's not
-// a secret. Find it in Google Cloud Console → Credentials, or it's the
-// value behind the GOOGLE_CLIENT_ID secret in Supabase).
-var GOOGLE_CLIENT_ID = "";
+var GOOGLE_CLIENT_ID = "924555050056-jp3k8vpo89tb14vfghjqefrb1aaik21e.apps.googleusercontent.com";
 var GOOGLE_OAUTH_REDIRECT_URI = SUPABASE_URL + "/functions/v1/lead-gmail-oauth";
 
 var gmailPool = [];
