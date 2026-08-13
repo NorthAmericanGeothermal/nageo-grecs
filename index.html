@@ -442,6 +442,91 @@ function deriveCity(c){
   return '';
 }
 
+// ══════════════════════════════════════════════════════════
+// CITY NORMALIZATION — HCP city names are typed freehand by whoever set up
+// each job, so the raw list is full of near-duplicates: case differences
+// ("leesburg" vs "Leesburg"), abbreviations ("Ft. Washington" vs "Fort
+// Washington"), stray annotations ("Great Falls (builder same)"), a missing
+// space ("Round Hill" vs "Roundhill"), and outright typos ("Manassas" vs
+// "Mannassas"). This groups all of those into one canonical spelling for the
+// filter dropdown/sort, without touching the underlying synced data — if you
+// ever fix the spelling in HCP itself, that's still the source of truth.
+function cleanCityRaw(raw){
+  var s = String(raw||'').trim();
+  if (!s) return '';
+  s = s.replace(/\s*\([^)]*\)\s*$/,'').trim();      // drop trailing "(...)" notes
+  s = s.replace(/^ft\.?\s+/i, 'Fort ');
+  s = s.replace(/^st\.?\s+/i, 'Saint ');
+  s = s.replace(/^mt\.?\s+/i, 'Mount ');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+function cityKey(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function looksProperCase(s){
+  if (!s || s === s.toLowerCase() || s === s.toUpperCase()) return false;
+  return /^[A-Z]/.test(s.trim());
+}
+function levenshtein(a, b){
+  var m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  var row = [];
+  for (var j=0; j<=n; j++) row[j] = j;
+  for (var i=1; i<=m; i++) {
+    var prev = row[0]; row[0] = i;
+    for (var j2=1; j2<=n; j2++) {
+      var tmp = row[j2];
+      row[j2] = a[i-1] === b[j2-1] ? prev : 1 + Math.min(prev, row[j2], row[j2-1]);
+      prev = tmp;
+    }
+  }
+  return row[n];
+}
+function citiesCloseEnough(keyA, keyB){
+  if (keyA === keyB) return true;
+  if (!keyA || !keyB || keyA[0] !== keyB[0]) return false; // typos rarely change the first letter
+  var maxLen = Math.max(keyA.length, keyB.length);
+  var threshold = maxLen <= 6 ? 1 : (maxLen <= 11 ? 2 : 3);
+  return levenshtein(keyA, keyB) <= threshold;
+}
+// Builds { keyToCanonical, canonicalLabels } from the current customer list.
+function buildCityIndex(list){
+  var exact = {}; // cityKey -> { count, labelCounts }
+  list.forEach(function(c){
+    var cleaned = cleanCityRaw(deriveCity(c));
+    if (!cleaned) return;
+    var key = cityKey(cleaned);
+    if (!key) return;
+    if (!exact[key]) exact[key] = { key:key, count:0, labelCounts:{} };
+    exact[key].count++;
+    exact[key].labelCounts[cleaned] = (exact[key].labelCounts[cleaned]||0) + 1;
+  });
+  var groups = Object.keys(exact).map(function(k){
+    var g = exact[k];
+    var labels = Object.keys(g.labelCounts).sort(function(a,b){
+      var pa = looksProperCase(a) ? 1 : 0, pb = looksProperCase(b) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return g.labelCounts[b] - g.labelCounts[a];
+    });
+    g.label = labels[0];
+    return g;
+  });
+  groups.sort(function(a,b){ return b.count - a.count; }); // biggest spelling wins as the canonical label
+  var canonical = [];
+  groups.forEach(function(g){
+    var match = canonical.find(function(cg){ return citiesCloseEnough(cg.key, g.key); });
+    if (match) { match.count += g.count; match.memberKeys.push(g.key); }
+    else canonical.push({ key:g.key, label:g.label, count:g.count, memberKeys:[g.key] });
+  });
+  var keyToCanonical = {};
+  canonical.forEach(function(cg){ cg.memberKeys.forEach(function(k){ keyToCanonical[k] = cg.label; }); });
+  return { keyToCanonical: keyToCanonical, canonicalLabels: canonical.map(function(cg){return cg.label;}).sort(function(a,b){return a.localeCompare(b);}) };
+}
+var cityIndex = { keyToCanonical:{}, canonicalLabels:[] };
+function canonicalCity(c){
+  var key = cityKey(cleanCityRaw(deriveCity(c)));
+  return cityIndex.keyToCanonical[key] || cleanCityRaw(deriveCity(c));
+}
+
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function showToast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},3200); }
 
@@ -512,7 +597,8 @@ function populateCityFilter(){
   var sel = document.getElementById('cityFilterSelect');
   if (!sel) return;
   var current = sel.value;
-  var cities = Array.from(new Set(customers.map(deriveCity).filter(Boolean))).sort(function(a,b){ return a.localeCompare(b); });
+  cityIndex = buildCityIndex(customers);
+  var cities = cityIndex.canonicalLabels;
   sel.innerHTML = '<option value="">All Cities</option>' + cities.map(function(c){ return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join('');
   if (cities.indexOf(current) !== -1) sel.value = current;
 }
@@ -523,7 +609,7 @@ function sortCustomers(list, sortBy){
     case 'name_desc': arr.sort(function(a,b){ return (b.customer_name||'').localeCompare(a.customer_name||''); }); break;
     case 'id_asc': arr.sort(function(a,b){ return (a.id_number||0)-(b.id_number||0); }); break;
     case 'id_desc': arr.sort(function(a,b){ return (b.id_number||0)-(a.id_number||0); }); break;
-    case 'city_asc': arr.sort(function(a,b){ return deriveCity(a).localeCompare(deriveCity(b)); }); break;
+    case 'city_asc': arr.sort(function(a,b){ return canonicalCity(a).localeCompare(canonicalCity(b)); }); break;
     case 'recent': arr.sort(function(a,b){ return new Date(b.synced_at||0) - new Date(a.synced_at||0); }); break;
     case 'name_asc': default: arr.sort(function(a,b){ return (a.customer_name||'').localeCompare(b.customer_name||''); }); break;
   }
@@ -541,7 +627,7 @@ function renderDashboard(){
 
   var list = customers.filter(function(c){
     if (q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(q)) return false;
-    if (cityFilter && deriveCity(c) !== cityFilter) return false;
+    if (cityFilter && canonicalCity(c) !== cityFilter) return false;
     if (activeFilter==='MD' || activeFilter==='VA') return c.state===activeFilter;
     if (activeFilter==='not_started') return !c.milestone_emailed && !c.milestone_called;
     if (activeFilter==='emailed') return !!c.milestone_emailed;
