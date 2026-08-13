@@ -78,10 +78,14 @@ button,input,select,textarea{font-family:inherit;}
 .stat-num{font-size:26px;font-weight:800;letter-spacing:-.5px;}
 .stat-label{font-size:12px;color:var(--text-dim);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-top:2px;}
 
-.filter-tabs{display:flex;gap:8px;margin-bottom:1.2rem;flex-wrap:wrap;}
+.filter-tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
 .filter-tab{padding:9px 16px;border-radius:999px;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid var(--glass-border);background:var(--glass);color:var(--text-dim);transition:all .15s;}
 .filter-tab:hover{background:var(--glass-hover);}
 .filter-tab.active{background:var(--green);border-color:var(--green);color:#fff;}
+
+.filter-extra{display:flex;gap:10px;margin-bottom:1.2rem;flex-wrap:wrap;}
+.dash-select{padding:10px 12px;border:1px solid var(--glass-border);border-radius:10px;background:var(--glass);color:var(--text);font-size:13.5px;font-weight:600;}
+.dash-select:focus{outline:none;border-color:var(--green);}
 
 .customer-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
 .customer-tile{
@@ -99,6 +103,7 @@ button,input,select,textarea{font-family:inherit;}
 .pill-cutoff{background:rgba(245,158,11,.18);color:#fbbf24;}
 .pill-status{background:rgba(255,255,255,.08);color:var(--text-dim);}
 .pill-status.emailed{background:rgba(67,160,71,.16);color:var(--green-light);}
+.pill-status.called{background:rgba(245,158,11,.18);color:#fbbf24;}
 .tile-meta{font-size:12.5px;color:var(--text-dim);}
 .tile-docs{font-size:12px;color:var(--text-dimmer);}
 .dash-empty{padding:4rem 1rem;text-align:center;color:var(--text-dimmer);grid-column:1/-1;}
@@ -127,6 +132,8 @@ button,input,select,textarea{font-family:inherit;}
 .milestone-step:hover{background:rgba(255,255,255,.07);}
 .milestone-step.done{background:rgba(67,160,71,.14);border-color:rgba(67,160,71,.35);color:var(--green-light);}
 .milestone-step.current{background:rgba(96,165,250,.14);border-color:rgba(96,165,250,.4);color:#93c5fd;}
+.milestone-step.notstarted{cursor:default;}
+.milestone-step.notstarted:hover{background:rgba(255,255,255,.03);}
 
 .doc-list{display:flex;flex-direction:column;gap:10px;}
 .doc-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:11px;background:rgba(255,255,255,.03);border:1px solid var(--glass-border);}
@@ -239,6 +246,21 @@ button,input,select,textarea{font-family:inherit;}
       <div class="filter-tab" data-filter="VA" onclick="setFilter('VA')">Virginia</div>
       <div class="filter-tab" data-filter="not_started" onclick="setFilter('not_started')">Not Started</div>
       <div class="filter-tab" data-filter="emailed" onclick="setFilter('emailed')">Emailed</div>
+      <div class="filter-tab" data-filter="called" onclick="setFilter('called')">Called</div>
+    </div>
+
+    <div class="filter-extra">
+      <select class="dash-select" id="cityFilterSelect" onchange="renderDashboard()">
+        <option value="">All Cities</option>
+      </select>
+      <select class="dash-select" id="sortBySelect" onchange="renderDashboard()">
+        <option value="name_asc">Sort: Name (A–Z)</option>
+        <option value="name_desc">Sort: Name (Z–A)</option>
+        <option value="id_asc">Sort: ID Number (Low–High)</option>
+        <option value="id_desc">Sort: ID Number (High–Low)</option>
+        <option value="city_asc">Sort: City (A–Z)</option>
+        <option value="recent">Sort: Recently Synced</option>
+      </select>
     </div>
 
     <div class="customer-grid" id="customerGrid"></div>
@@ -393,10 +415,32 @@ var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
 var GREC_SEND_EMAIL_URL = SUPABASE_URL + "/functions/v1/grec-send-email";
 var STORAGE_BUCKET = "grec-documents";
 
-var MILESTONES = [
-  { key:"not_started", label:"Not Started" },
-  { key:"emailed", label:"Emailed" }
+// Milestones are two independent toggles now (emailed / called) — either,
+// both, or neither can be true. "Not Started" isn't a toggle, it's just
+// what's shown when neither flag is set.
+var MILESTONE_TOGGLES = [
+  { field:"milestone_emailed", label:"Emailed" },
+  { field:"milestone_called", label:"Called" }
 ];
+function milestoneBadgesHtml(c){
+  if (!c.milestone_emailed && !c.milestone_called) return '<span class="pill pill-status">Not Started</span>';
+  var out = '';
+  if (c.milestone_emailed) out += '<span class="pill pill-status emailed">Emailed</span>';
+  if (c.milestone_called) out += '<span class="pill pill-status called">Called</span>';
+  return out;
+}
+
+// Best-effort city for filtering/sorting — prefers a synced `city` column,
+// falls back to parsing it out of the combined address string for rows
+// synced before that column existed (city is normally the 3rd-from-last
+// comma-separated segment: ...,[street2,] city, state, zip).
+function deriveCity(c){
+  if (c.city) return c.city;
+  var parts = String(c.address||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
+  if (parts.length >= 3) return parts[parts.length-3];
+  if (parts.length === 2) return parts[0];
+  return '';
+}
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function showToast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},3200); }
@@ -446,6 +490,7 @@ async function showDashboard(){
   document.getElementById('dashboardView').style.display='block';
   await loadCustomers();
   await loadDocCounts();
+  populateCityFilter();
   renderDashboard();
 }
 async function loadCustomers(){
@@ -461,8 +506,34 @@ function setFilter(f){
   renderDashboard();
 }
 
+// City dropdown is rebuilt from whatever's currently loaded — keeps the
+// current selection if it's still a valid city after a resync.
+function populateCityFilter(){
+  var sel = document.getElementById('cityFilterSelect');
+  if (!sel) return;
+  var current = sel.value;
+  var cities = Array.from(new Set(customers.map(deriveCity).filter(Boolean))).sort(function(a,b){ return a.localeCompare(b); });
+  sel.innerHTML = '<option value="">All Cities</option>' + cities.map(function(c){ return '<option value="'+esc(c)+'">'+esc(c)+'</option>'; }).join('');
+  if (cities.indexOf(current) !== -1) sel.value = current;
+}
+
+function sortCustomers(list, sortBy){
+  var arr = list.slice();
+  switch (sortBy) {
+    case 'name_desc': arr.sort(function(a,b){ return (b.customer_name||'').localeCompare(a.customer_name||''); }); break;
+    case 'id_asc': arr.sort(function(a,b){ return (a.id_number||0)-(b.id_number||0); }); break;
+    case 'id_desc': arr.sort(function(a,b){ return (b.id_number||0)-(a.id_number||0); }); break;
+    case 'city_asc': arr.sort(function(a,b){ return deriveCity(a).localeCompare(deriveCity(b)); }); break;
+    case 'recent': arr.sort(function(a,b){ return new Date(b.synced_at||0) - new Date(a.synced_at||0); }); break;
+    case 'name_asc': default: arr.sort(function(a,b){ return (a.customer_name||'').localeCompare(b.customer_name||''); }); break;
+  }
+  return arr;
+}
+
 function renderDashboard(){
   var q = (document.getElementById('dashSearch').value||'').toLowerCase();
+  var cityFilter = document.getElementById('cityFilterSelect') ? document.getElementById('cityFilterSelect').value : '';
+  var sortBy = document.getElementById('sortBySelect') ? document.getElementById('sortBySelect').value : 'name_asc';
   document.getElementById('statTotal').textContent = customers.length;
   document.getElementById('statMd').textContent = customers.filter(function(c){return c.state==='MD';}).length;
   document.getElementById('statVa').textContent = customers.filter(function(c){return c.state==='VA';}).length;
@@ -470,10 +541,14 @@ function renderDashboard(){
 
   var list = customers.filter(function(c){
     if (q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(q)) return false;
-    if (activeFilter==='all') return true;
+    if (cityFilter && deriveCity(c) !== cityFilter) return false;
     if (activeFilter==='MD' || activeFilter==='VA') return c.state===activeFilter;
-    return c.milestone_status===activeFilter;
+    if (activeFilter==='not_started') return !c.milestone_emailed && !c.milestone_called;
+    if (activeFilter==='emailed') return !!c.milestone_emailed;
+    if (activeFilter==='called') return !!c.milestone_called;
+    return true; // 'all'
   });
+  list = sortCustomers(list, sortBy);
 
   var grid = document.getElementById('customerGrid');
   if (!list.length) {
@@ -487,14 +562,13 @@ function renderDashboard(){
       + '<div class="tile-badges">'
         + '<span class="pill '+(c.state==='MD'?'pill-md':'pill-va')+'">'+esc(c.state)+'</span>'
         + (c.older_than_cutoff ? '<span class="pill pill-cutoff">Pre-8/16/22</span>' : '')
-        + '<span class="pill pill-status '+esc(c.milestone_status)+'">'+esc(milestoneLabel(c.milestone_status))+'</span>'
+        + milestoneBadgesHtml(c)
       + '</div>'
       + '<div class="tile-meta">'+esc(c.address||'No address on file')+'</div>'
       + '<div class="tile-docs">'+docCount+' document'+(docCount===1?'':'s')+' uploaded</div>'
       + '</div>';
   }).join('');
 }
-function milestoneLabel(key){ var m = MILESTONES.find(function(x){return x.key===key;}); return m ? m.label : key; }
 
 // Doc counts per customer, loaded alongside the dashboard so tiles can show progress without a query-per-tile.
 var docCountByCustomer = {};
@@ -505,8 +579,9 @@ async function loadDocCounts(){
 }
 
 // ── Sync from HCP — pulls the full candidate list from the Edge Function and
-// upserts it into grec_customers. Never touches milestone_status on existing
-// rows (that field is intentionally left out of the upsert payload). ──
+// upserts it into grec_customers. Never touches milestone_emailed/
+// milestone_called on existing rows (those fields are intentionally left out
+// of the upsert payload). ──
 async function syncFromHcp(){
   var btn = document.getElementById('syncBtn');
   btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Syncing…';
@@ -517,7 +592,7 @@ async function syncFromHcp(){
     var rows = (data.customers||[]).map(function(c){
       return {
         hcp_id: c.hcpId, id_prefix: c.idPrefix, id_number: c.idNumber,
-        customer_name: c.name, email: c.email, phone: c.phone, address: c.address,
+        customer_name: c.name, email: c.email, phone: c.phone, address: c.address, city: c.city || null,
         state: c.state, older_than_cutoff: c.olderThanCutoff, synced_at: new Date().toISOString()
       };
     });
@@ -570,7 +645,7 @@ function renderDetail(){
   document.getElementById('detailBadges').innerHTML =
     '<span class="pill '+(currentCustomer.state==='MD'?'pill-md':'pill-va')+'">'+esc(currentCustomer.state)+'</span>'
     + (currentCustomer.older_than_cutoff ? '<span class="pill pill-cutoff">Pre-8/16/22</span>' : '')
-    + '<span class="pill pill-status '+esc(currentCustomer.milestone_status)+'">'+esc(milestoneLabel(currentCustomer.milestone_status))+'</span>';
+    + milestoneBadgesHtml(currentCustomer);
 
   document.getElementById('fName').value = currentCustomer.customer_name || '';
   document.getElementById('fId').value = currentCustomer.hcp_id || '';
@@ -578,11 +653,13 @@ function renderDetail(){
   document.getElementById('fPhone').value = currentCustomer.phone || '';
   document.getElementById('fAddress').value = currentCustomer.address || '';
 
-  var curIdx = MILESTONES.findIndex(function(m){return m.key===currentCustomer.milestone_status;});
-  document.getElementById('milestoneSteps').innerHTML = MILESTONES.map(function(m, i){
-    var cls = i < curIdx ? 'done' : (i === curIdx ? 'current' : '');
-    return '<div class="milestone-step '+cls+'" onclick="setMilestone(\''+m.key+'\')" title="Click to set">'+esc(m.label)+'</div>';
-  }).join('');
+  var noneSet = !currentCustomer.milestone_emailed && !currentCustomer.milestone_called;
+  document.getElementById('milestoneSteps').innerHTML =
+    '<div class="milestone-step notstarted'+(noneSet?' current':'')+'">Not Started</div>'
+    + MILESTONE_TOGGLES.map(function(m){
+        var on = !!currentCustomer[m.field];
+        return '<div class="milestone-step'+(on?' done':'')+'" onclick="toggleMilestone(\''+m.field+'\')" title="Click to toggle">'+esc(m.label)+(on?' ✓':'')+'</div>';
+      }).join('');
 
   document.getElementById('docList').innerHTML = documents.length
     ? documents.map(function(doc){
@@ -599,11 +676,14 @@ function renderDetail(){
     : '<div class="doc-empty">No documents uploaded yet.</div>';
 }
 
-async function setMilestone(status){
-  if (!currentCustomer || status === currentCustomer.milestone_status) return;
-  var r = await sb.from('grec_customers').update({ milestone_status: status, updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
+async function toggleMilestone(field){
+  if (!currentCustomer) return;
+  var newVal = !currentCustomer[field];
+  var updates = { updated_at: new Date().toISOString() };
+  updates[field] = newVal;
+  var r = await sb.from('grec_customers').update(updates).eq('id', currentCustomer.id);
   if (r.error) { showToast('Could not update milestone: ' + r.error.message); return; }
-  currentCustomer.milestone_status = status;
+  currentCustomer[field] = newVal;
   renderDetail();
 }
 
@@ -876,9 +956,9 @@ async function sendEmail(){
   var ins = await sb.from('grec_activity').insert(activityRow);
   if (ins.error) { console.warn('[grecs] activity log failed', ins.error); }
 
-  if (currentCustomer.milestone_status === 'not_started') {
-    var mUpd = await sb.from('grec_customers').update({ milestone_status: 'emailed', updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
-    if (!mUpd.error) currentCustomer.milestone_status = 'emailed';
+  if (!currentCustomer.milestone_emailed) {
+    var mUpd = await sb.from('grec_customers').update({ milestone_emailed: true, updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
+    if (!mUpd.error) currentCustomer.milestone_emailed = true;
   }
 
   btn.disabled = false; btn.textContent = origText;
