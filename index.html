@@ -154,6 +154,13 @@ button,input,select,textarea{font-family:inherit;}
 .activity-msg{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .activity-meta{font-size:11.5px;color:var(--text-dimmer);margin-top:2px;}
 .activity-empty{font-size:12.5px;color:var(--text-dimmer);text-align:center;padding:1rem;}
+.activity-badges{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap;}
+.reply-badge{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:999px;white-space:nowrap;}
+.reply-badge.replied{background:rgba(67,160,71,.16);color:var(--green-light);}
+.reply-badge.no_reply{background:rgba(255,255,255,.08);color:var(--text-dimmer);}
+.gmail-row-email{font-size:13.5px;font-weight:700;}
+.gmail-row-sub{font-size:11.5px;color:var(--text-dimmer);margin-top:2px;}
+.gmail-default-tag{font-size:10.5px;font-weight:700;color:var(--green-light);background:rgba(67,160,71,.14);padding:3px 8px;border-radius:999px;}
 
 /* ── Modal ── */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(6,13,26,.7);backdrop-filter:blur(4px);z-index:200;align-items:center;justify-content:center;padding:1rem;}
@@ -167,6 +174,9 @@ button,input,select,textarea{font-family:inherit;}
 .step-num.ok{background:var(--green);border-color:var(--green);color:#fff;}
 .modal-input{width:100%;padding:12px 14px;border:1px solid var(--glass-border);border-radius:10px;font-size:15px;background:rgba(255,255,255,.04);color:var(--text);}
 .modal-input:focus{outline:none;border-color:var(--green);}
+.modal-select{width:100%;padding:12px 14px;border:1px solid var(--glass-border);border-radius:10px;font-size:15px;background:rgba(255,255,255,.04);color:var(--text);}
+.modal-select:focus{outline:none;border-color:var(--green);}
+.modal-select option{background:var(--navy2);color:var(--text);}
 .modal-check{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--text-dim);line-height:1.5;cursor:pointer;}
 .modal-check input{margin-top:3px;flex-shrink:0;}
 .modal-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:1.4rem;}
@@ -279,6 +289,10 @@ button,input,select,textarea{font-family:inherit;}
   <div class="modal" style="width:580px;">
     <div class="modal-title">Send Email</div>
     <div class="modal-row">
+      <div class="modal-label">Sending as</div>
+      <select class="modal-select" id="emailFromSelect" onchange="onEmailFromChange()"></select>
+    </div>
+    <div class="modal-row">
       <div class="modal-label">To</div>
       <input type="text" class="modal-input" id="emailTo" placeholder="customer@email.com">
     </div>
@@ -306,7 +320,15 @@ button,input,select,textarea{font-family:inherit;}
 </div>
 
 <div class="modal-bg" id="settingsModal">
-  <div class="modal" style="width:580px;">
+  <div class="modal" style="width:620px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-title">Gmail Accounts</div>
+    <div class="merge-hint">Any connected account here can be used by anyone logged into GRECs — pick your own default below. Connecting one also grants it to the Leads tool's inbox sync (same connection, shared across both).</div>
+    <div class="doc-list" id="gmailPoolList" style="margin-bottom:10px;"></div>
+    <div class="modal-btns" style="justify-content:flex-start;margin-top:0;margin-bottom:1.6rem;">
+      <button class="btn btn-sm" onclick="connectGmail()">+ Connect Gmail</button>
+      <button class="btn btn-sm" onclick="loadGmailPool()">⟳ Refresh</button>
+    </div>
+
     <div class="modal-title">Default Email Template</div>
     <div class="merge-hint">Use <code>{{name}}</code> anywhere below and it'll be swapped for the customer's name automatically when you send. This template applies to every "Send Email" across all customers.</div>
     <div class="modal-row">
@@ -325,8 +347,30 @@ button,input,select,textarea{font-family:inherit;}
       <div class="rte-editor" contenteditable="true" id="settingsBodyEditor"></div>
     </div>
     <div class="modal-btns">
-      <button class="modal-cancel" onclick="closeSettingsModal()">Cancel</button>
+      <button class="modal-cancel" onclick="closeSettingsModal()">Close</button>
       <button class="modal-go" id="settingsSaveBtn" onclick="saveSettings()" style="background:var(--green);">Save Template</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="gmailDefaultModal">
+  <div class="modal" style="width:440px;">
+    <div class="modal-title">Which Gmail should send by default?</div>
+    <div class="modal-warn">You can change this anytime in ⚙ Email Template → Gmail Accounts.</div>
+    <div class="doc-list" id="gmailDefaultList" style="margin-bottom:6px;"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeGmailDefaultModal()">Skip for now</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="viewEmailModal">
+  <div class="modal" style="width:580px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-title">Sent Email</div>
+    <div class="merge-hint" id="viewEmailMeta"></div>
+    <div class="rte-editor" id="viewEmailBody" style="cursor:default;"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeViewEmailModal()">Close</button>
     </div>
   </div>
 </div>
@@ -388,11 +432,13 @@ function doLogout(){
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('pinInput').value='';
 }
-function showApp(){
+async function showApp(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('app').style.display='block';
   document.getElementById('topbarName').textContent = currentUser.name;
   showDashboard();
+  await loadGmailPool();
+  maybePromptGmailDefault();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -631,6 +677,85 @@ async function recomputeMilestone(){
 }
 
 // ══════════════════════════════════════════════════════════
+// SHARED GMAIL POOL — any connected Gmail account can be used by anyone
+// logged into GRECs (not locked to whoever connected it). Each person picks
+// their own default (users.default_gmail_email), prompted once on first
+// login if any accounts are already connected. Uses the same gmail_accounts
+// table the Leads tool's Gmail sync already built.
+// ══════════════════════════════════════════════════════════
+// TODO: paste your Google OAuth Client ID here to enable the "Connect
+// Gmail" button below (Client ID is safe to expose client-side — it's not
+// a secret. Find it in Google Cloud Console → Credentials, or it's the
+// value behind the GOOGLE_CLIENT_ID secret in Supabase).
+var GOOGLE_CLIENT_ID = "";
+var GOOGLE_OAUTH_REDIRECT_URI = SUPABASE_URL + "/functions/v1/lead-gmail-oauth";
+
+var gmailPool = [];
+async function loadGmailPool(){
+  try {
+    var res = await fetch(GREC_SEND_EMAIL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ action: 'list_pool' })
+    });
+    var data = await res.json();
+    gmailPool = (data && data.accounts) || [];
+  } catch (e) {
+    console.warn('[grecs] gmail pool load failed', e);
+    gmailPool = [];
+  }
+  renderGmailPoolInSettings();
+}
+function renderGmailPoolInSettings(){
+  var el = document.getElementById('gmailPoolList');
+  if (!el) return;
+  if (!gmailPool.length) { el.innerHTML = '<div class="activity-empty">No Gmail accounts connected yet.</div>'; return; }
+  el.innerHTML = gmailPool.map(function(a){
+    var isDefault = currentUser && currentUser.default_gmail_email === a.google_email;
+    return '<div class="doc-row"><div class="doc-info">'
+      + '<div class="gmail-row-email">'+esc(a.google_email)+'</div>'
+      + '<div class="gmail-row-sub">'+esc(a.status)+'</div>'
+      + '</div><div class="doc-actions">'
+      + (isDefault ? '<span class="gmail-default-tag">Your default</span>' : '<button class="btn btn-sm" onclick="setDefaultGmail(\''+esc(a.google_email)+'\')">Set as my default</button>')
+      + '</div></div>';
+  }).join('');
+}
+async function setDefaultGmail(email){
+  if (!currentUser) return;
+  var r = await sb.from('users').update({ default_gmail_email: email }).eq('id', currentUser.id);
+  if (r.error) { showToast('Could not save default: ' + r.error.message); return; }
+  currentUser.default_gmail_email = email;
+  localStorage.setItem('nageo_grecs_user', JSON.stringify(currentUser));
+  renderGmailPoolInSettings();
+  closeGmailDefaultModal();
+  showToast('Default Gmail set to ' + email + '.');
+}
+function connectGmail(){
+  if (!GOOGLE_CLIENT_ID) { showToast('Google Client ID not set yet — see the TODO near the top of the script.'); return; }
+  var params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_OAUTH_REDIRECT_URI,
+    response_type: 'code',
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.metadata https://www.googleapis.com/auth/gmail.send',
+    state: currentUser ? currentUser.id : ''
+  });
+  window.open('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString(), '_blank');
+  showToast('Complete the Google sign-in in the new tab, then come back and click Refresh.');
+}
+function maybePromptGmailDefault(){
+  if (!currentUser || currentUser.default_gmail_email || !gmailPool.length) return;
+  var el = document.getElementById('gmailDefaultList');
+  el.innerHTML = gmailPool.map(function(a){
+    return '<div class="doc-row"><div class="doc-info"><div class="gmail-row-email">'+esc(a.google_email)+'</div></div>'
+      + '<div class="doc-actions"><button class="btn btn-sm btn-accent" onclick="setDefaultGmail(\''+esc(a.google_email)+'\')">Use this</button></div></div>';
+  }).join('');
+  document.getElementById('gmailDefaultModal').classList.add('open');
+}
+function closeGmailDefaultModal(){ document.getElementById('gmailDefaultModal').classList.remove('open'); }
+
+// ══════════════════════════════════════════════════════════
 // EMAIL TEMPLATE SETTINGS — one shared template (subject + rich-text body)
 // used as the starting point every time "Send Email" is opened. Stored in
 // grec_settings (a single row, id=1).
@@ -644,6 +769,7 @@ async function loadSettings(){
   if (!r.error && r.data) GREC_SETTINGS = r.data;
 }
 function openSettingsModal(){
+  loadGmailPool();
   document.getElementById('settingsSubject').value = GREC_SETTINGS.email_subject || '';
   document.getElementById('settingsBodyEditor').innerHTML = GREC_SETTINGS.email_body_html || '';
   document.getElementById('settingsModal').classList.add('open');
@@ -678,50 +804,44 @@ function mergeHtml(str, customer){ return String(str||'').replace(/\{\{\s*name\s
 
 // ══════════════════════════════════════════════════════════
 // SEND EMAIL
-// If the logged-in rep has already connected Gmail (same connection used by
-// the Leads tool's inbox sync), this sends directly through the Gmail API —
-// full HTML formatting kept, one click, no manual step. If not connected
-// yet, it falls back to opening a pre-filled Gmail compose window (plain
-// text only) that the rep sends manually. Either way, the send gets logged
-// to this customer's activity feed.
+// "Sending as" picks any connected account from the shared pool (defaults
+// to your saved default). If the selected account has send permission,
+// this sends directly through the Gmail API — full HTML kept, one click.
+// The "Open in Gmail manually" option always falls back to a pre-filled
+// compose window (plain text) for cases where nothing's connected yet.
+// Either way, the send gets logged to this customer's activity feed.
 // ══════════════════════════════════════════════════════════
-var gmailConnected = false;
-var gmailConnectedAs = null;
+function populateEmailFromSelect(){
+  var sel = document.getElementById('emailFromSelect');
+  var options = gmailPool.map(function(a){ return '<option value="'+esc(a.google_email)+'">'+esc(a.google_email)+'</option>'; });
+  options.push('<option value="">Open in Gmail manually (no account selected)</option>');
+  sel.innerHTML = options.join('');
+  var preferred = (currentUser && currentUser.default_gmail_email && gmailPool.some(function(a){return a.google_email===currentUser.default_gmail_email;}))
+    ? currentUser.default_gmail_email
+    : (gmailPool[0] ? gmailPool[0].google_email : '');
+  sel.value = preferred;
+}
+function onEmailFromChange(){
+  var note = document.getElementById('emailSendNote');
+  var btn = document.getElementById('emailSendBtn');
+  var val = document.getElementById('emailFromSelect').value;
+  if (val) {
+    note.textContent = 'Sends directly through ' + val + '.';
+    btn.textContent = 'Send Email';
+  } else {
+    note.textContent = 'Opens a pre-filled Gmail compose window instead — review it and click Send yourself in Gmail.';
+    btn.textContent = 'Open in Gmail →';
+  }
+}
 
 async function openEmailModal(){
   if (!currentCustomer) return;
   document.getElementById('emailTo').value = currentCustomer.email || '';
   document.getElementById('emailSubject').value = mergeText(GREC_SETTINGS.email_subject, currentCustomer);
   document.getElementById('emailBodyEditor').innerHTML = mergeHtml(GREC_SETTINGS.email_body_html, currentCustomer);
+  populateEmailFromSelect();
+  onEmailFromChange();
   document.getElementById('emailModal').classList.add('open');
-
-  var note = document.getElementById('emailSendNote');
-  var btn = document.getElementById('emailSendBtn');
-  btn.disabled = true; btn.textContent = '…';
-  note.textContent = 'Checking your Gmail connection…';
-
-  try {
-    var res = await fetch(GREC_SEND_EMAIL_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
-      body: JSON.stringify({ action: 'check_connection', rep_id: currentUser.id })
-    });
-    var data = await res.json();
-    gmailConnected = !!(data && data.connected);
-    gmailConnectedAs = data && data.google_email;
-  } catch (e) {
-    console.warn('[grecs] gmail connection check failed', e);
-    gmailConnected = false;
-  }
-
-  btn.disabled = false;
-  if (gmailConnected) {
-    note.textContent = 'Sends directly through your connected Gmail (' + gmailConnectedAs + ').';
-    btn.textContent = 'Send Email';
-  } else {
-    note.textContent = 'Your Gmail isn\'t connected yet, so this opens a pre-filled Gmail compose window instead — review it and click Send yourself in Gmail.';
-    btn.textContent = 'Open in Gmail →';
-  }
 }
 function closeEmailModal(){ document.getElementById('emailModal').classList.remove('open'); }
 
@@ -739,22 +859,28 @@ async function sendEmail(){
   var to = document.getElementById('emailTo').value.trim();
   var subject = document.getElementById('emailSubject').value.trim();
   var bodyHtml = document.getElementById('emailBodyEditor').innerHTML;
+  var fromEmail = document.getElementById('emailFromSelect').value;
   if (!to) { showToast('Enter a "To" email address.'); return; }
 
   var btn = document.getElementById('emailSendBtn');
   btn.disabled = true; var origText = btn.textContent; btn.textContent = 'Sending…';
 
-  var activityMessage = subject || '(no subject)';
+  var activityRow = {
+    customer_id: currentCustomer.id, type: 'email_sent', message: subject || '(no subject)',
+    email_html: bodyHtml, email_to: to, sent_from_email: fromEmail || null, created_by: currentUser.name
+  };
 
-  if (gmailConnected) {
+  if (fromEmail) {
     try {
       var res = await fetch(GREC_SEND_EMAIL_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
-        body: JSON.stringify({ action: 'send', rep_id: currentUser.id, to: to, subject: subject, html_body: bodyHtml })
+        body: JSON.stringify({ action: 'send', google_email: fromEmail, to: to, subject: subject, html_body: bodyHtml })
       });
       var data = await res.json();
       if (!res.ok || data.error) { showToast('Send failed: ' + (data.error || 'unknown error')); btn.disabled=false; btn.textContent=origText; return; }
+      activityRow.gmail_thread_id = data.gmail_thread_id || null;
+      activityRow.gmail_message_id = data.gmail_message_id || null;
     } catch (e) {
       showToast('Send failed — see console.'); console.error(e); btn.disabled=false; btn.textContent=origText; return;
     }
@@ -765,16 +891,14 @@ async function sendEmail(){
     window.open(gmailUrl, '_blank');
   }
 
-  var ins = await sb.from('grec_activity').insert({
-    customer_id: currentCustomer.id, type: 'email_sent', message: activityMessage, created_by: currentUser.name
-  });
+  var ins = await sb.from('grec_activity').insert(activityRow);
   if (ins.error) { console.warn('[grecs] activity log failed', ins.error); }
 
   btn.disabled = false; btn.textContent = origText;
   closeEmailModal();
   await loadActivity();
   renderActivity();
-  showToast(gmailConnected ? 'Email sent.' : 'Opened in Gmail — logged to activity.');
+  showToast(fromEmail ? 'Email sent.' : 'Opened in Gmail — logged to activity.');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -800,11 +924,56 @@ function renderActivity(){
   if (!activity.length) { el.innerHTML = '<div class="activity-empty">No activity yet.</div>'; return; }
   el.innerHTML = activity.map(function(a){
     var label = a.type==='email_sent' ? 'Email sent: ' : '';
+    var canCheckReply = a.type==='email_sent' && a.gmail_thread_id && a.sent_from_email;
+    var replyBadge = '';
+    if (a.reply_status === 'replied') {
+      replyBadge = '<span class="reply-badge replied">↩ Replied' + (a.reply_checked_at ? ' — checked ' + timeAgo(a.reply_checked_at) : '') + '</span>';
+    } else if (a.reply_status === 'no_reply' && a.reply_checked_at) {
+      replyBadge = '<span class="reply-badge no_reply">No reply yet — checked ' + timeAgo(a.reply_checked_at) + '</span>';
+    }
     return '<div class="activity-row"><div class="activity-main">'
       + '<div class="activity-msg">'+esc(label)+esc(a.message||'')+'</div>'
       + '<div class="activity-meta">by '+esc(a.created_by||'—')+' · '+timeAgo(a.created_at)+'</div>'
+      + '<div class="activity-badges">'
+        + (a.type==='email_sent' && a.email_html ? '<button class="btn btn-sm" onclick="openViewEmail(\''+a.id+'\')">View email</button>' : '')
+        + (canCheckReply ? '<button class="btn btn-sm" onclick="checkReplyForActivity(\''+a.id+'\')">Check for reply</button>' : '')
+        + replyBadge
+      + '</div>'
       + '</div></div>';
   }).join('');
+}
+
+function openViewEmail(activityId){
+  var a = activity.find(function(x){ return x.id===activityId; });
+  if (!a) return;
+  document.getElementById('viewEmailMeta').textContent = 'To ' + (a.email_to||'—') + (a.sent_from_email ? ' · from ' + a.sent_from_email : '') + ' · ' + timeAgo(a.created_at);
+  document.getElementById('viewEmailBody').innerHTML = a.email_html || '<em>No content saved.</em>';
+  document.getElementById('viewEmailModal').classList.add('open');
+}
+function closeViewEmailModal(){ document.getElementById('viewEmailModal').classList.remove('open'); }
+
+async function checkReplyForActivity(activityId){
+  var a = activity.find(function(x){ return x.id===activityId; });
+  if (!a || !a.gmail_thread_id || !a.sent_from_email) return;
+  showToast('Checking for a reply…');
+  try {
+    var res = await fetch(GREC_SEND_EMAIL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ action: 'check_reply', google_email: a.sent_from_email, gmail_thread_id: a.gmail_thread_id })
+    });
+    var data = await res.json();
+    if (!res.ok || data.error) { showToast('Could not check: ' + (data.error || 'unknown error')); return; }
+    var status = data.replied ? 'replied' : 'no_reply';
+    var checkedAt = new Date().toISOString();
+    await sb.from('grec_activity').update({ reply_status: status, reply_checked_at: checkedAt }).eq('id', activityId);
+    a.reply_status = status; a.reply_checked_at = checkedAt;
+    renderActivity();
+    showToast(data.replied ? 'They\'ve replied.' : 'No reply yet.');
+  } catch (e) {
+    console.error(e);
+    showToast('Could not check for a reply — see console.');
+  }
 }
 
 // ── Boot ──
