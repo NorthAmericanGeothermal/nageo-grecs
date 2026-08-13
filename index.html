@@ -100,7 +100,6 @@ button,input,select,textarea{font-family:inherit;}
 .pill-status{background:rgba(255,255,255,.08);color:var(--text-dim);}
 .pill-status.docs_in_progress{background:rgba(96,165,250,.16);color:#93c5fd;}
 .pill-status.ready_to_submit{background:rgba(67,160,71,.16);color:var(--green-light);}
-.pill-status.transferred{background:rgba(139,92,246,.18);color:#c4b5fd;}
 .tile-meta{font-size:12.5px;color:var(--text-dim);}
 .tile-docs{font-size:12px;color:var(--text-dimmer);}
 .dash-empty{padding:4rem 1rem;text-align:center;color:var(--text-dimmer);grid-column:1/-1;}
@@ -138,6 +137,23 @@ button,input,select,textarea{font-family:inherit;}
 .doc-actions{display:flex;gap:6px;flex-shrink:0;}
 .file-upload-btn{position:relative;overflow:hidden;}
 .file-upload-btn input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;}
+
+.rte-toolbar{display:flex;gap:6px;margin-bottom:8px;}
+.rte-toolbar button{width:34px;height:30px;border-radius:7px;border:1px solid var(--glass-border);background:rgba(255,255,255,.04);color:var(--text);cursor:pointer;font-size:13px;}
+.rte-toolbar button:hover{background:var(--glass-hover);}
+.rte-editor{min-height:140px;max-height:320px;overflow-y:auto;border:1px solid var(--glass-border);border-radius:9px;background:rgba(255,255,255,.04);color:var(--text);padding:10px 12px;font-size:14px;line-height:1.5;}
+.rte-editor:focus{outline:none;border-color:var(--green);}
+.rte-editor ul,.rte-editor ol{padding-left:20px;margin:6px 0;}
+.rte-editor p{margin:6px 0;}
+.merge-hint{font-size:11.5px;color:var(--text-dimmer);margin-bottom:10px;}
+.merge-hint code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;}
+
+.activity-list{display:flex;flex-direction:column;gap:8px;}
+.activity-row{display:flex;gap:10px;align-items:flex-start;font-size:13px;padding:10px 12px;border-radius:9px;background:rgba(255,255,255,.03);border:1px solid var(--glass-border);}
+.activity-main{flex:1;min-width:0;}
+.activity-msg{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.activity-meta{font-size:11.5px;color:var(--text-dimmer);margin-top:2px;}
+.activity-empty{font-size:12.5px;color:var(--text-dimmer);text-align:center;padding:1rem;}
 
 /* ── Modal ── */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(6,13,26,.7);backdrop-filter:blur(4px);z-index:200;align-items:center;justify-content:center;padding:1rem;}
@@ -185,7 +201,7 @@ button,input,select,textarea{font-family:inherit;}
   <div class="topbar">
     <div class="topbar-brand"><div class="topbar-badge"><img src="icons/icon-hub.png" alt="" onerror="this.parentElement.style.display='none'"></div>NAGeo <span>GRECs</span></div>
     <div class="spacer"></div>
-    <button class="btn btn-sm" onclick="openFlett()">Flett Exchange ↗</button>
+    <button class="btn btn-sm" onclick="openSettingsModal()">⚙ Email Template</button>
     <div class="topbar-user">Hi, <strong id="topbarName"></strong></div>
     <button class="btn btn-sm" onclick="doLogout()">Sign out</button>
   </div>
@@ -213,7 +229,6 @@ button,input,select,textarea{font-family:inherit;}
       <div class="filter-tab" data-filter="VA" onclick="setFilter('VA')">Virginia</div>
       <div class="filter-tab" data-filter="not_started" onclick="setFilter('not_started')">Not Started</div>
       <div class="filter-tab" data-filter="ready_to_submit" onclick="setFilter('ready_to_submit')">Ready to Submit</div>
-      <div class="filter-tab" data-filter="transferred" onclick="setFilter('transferred')">Transferred</div>
     </div>
 
     <div class="customer-grid" id="customerGrid"></div>
@@ -228,8 +243,7 @@ button,input,select,textarea{font-family:inherit;}
         <div class="detail-badges" id="detailBadges"></div>
       </div>
       <div class="detail-actions">
-        <button class="btn btn-sm" onclick="openFlett()">Open Flett Exchange ↗</button>
-        <button class="btn btn-accent btn-sm" id="transferBtn" onclick="openTransferModal()">Transfer to Flett Exchange</button>
+        <button class="btn btn-accent btn-sm" onclick="openEmailModal()">✉ Send Email</button>
       </div>
     </div>
 
@@ -253,30 +267,66 @@ button,input,select,textarea{font-family:inherit;}
       <div class="card-title">Documents</div>
       <div class="doc-list" id="docList"></div>
     </div>
+
+    <div class="card">
+      <div class="card-title">Activity</div>
+      <div class="activity-list" id="activityList"></div>
+    </div>
   </div>
 </div>
 
-<div class="modal-bg" id="transferModal">
-  <div class="modal">
-    <div class="modal-title">Transfer to Flett Exchange</div>
-    <div class="modal-warn">This sends <strong id="transferCustName">this customer</strong>'s information to Flett Exchange for GREC processing. This can't be undone from here — complete all three steps to confirm.</div>
-
+<div class="modal-bg" id="emailModal">
+  <div class="modal" style="width:580px;">
+    <div class="modal-title">Send Email</div>
     <div class="modal-row">
-      <div class="modal-label"><span class="step-num" id="stepDot1">1</span> Re-enter your PIN</div>
-      <input type="password" class="modal-input" id="transferPin" maxlength="6" inputmode="numeric" oninput="updateTransferGate()">
+      <div class="modal-label">To</div>
+      <input type="text" class="modal-input" id="emailTo" placeholder="customer@email.com">
     </div>
     <div class="modal-row">
-      <div class="modal-label"><span class="step-num" id="stepDot2">2</span> Confirm</div>
-      <label class="modal-check"><input type="checkbox" id="transferCheck" onchange="updateTransferGate()"> I confirm this customer's information and documents are ready to send to Flett Exchange, and that this action cannot be undone.</label>
+      <div class="modal-label">Subject</div>
+      <input type="text" class="modal-input" id="emailSubject">
     </div>
     <div class="modal-row">
-      <div class="modal-label"><span class="step-num" id="stepDot3">3</span> Type the customer's name exactly to confirm</div>
-      <input type="text" class="modal-input" id="transferName" oninput="updateTransferGate()" placeholder="">
+      <div class="modal-label">Message</div>
+      <div class="rte-toolbar">
+        <button type="button" onclick="rteCmd('emailBodyEditor','bold')" title="Bold"><b>B</b></button>
+        <button type="button" onclick="rteCmd('emailBodyEditor','italic')" title="Italic"><i>I</i></button>
+        <button type="button" onclick="rteCmd('emailBodyEditor','insertUnorderedList')" title="Bullet list">•≡</button>
+        <button type="button" onclick="rteCmd('emailBodyEditor','insertOrderedList')" title="Numbered list">1≡</button>
+        <button type="button" onclick="rteCmd('emailBodyEditor','removeFormat')" title="Clear formatting">Tx</button>
+      </div>
+      <div class="rte-editor" contenteditable="true" id="emailBodyEditor"></div>
     </div>
-
+    <div class="modal-warn" id="emailSendNote">For now this opens a pre-filled Gmail compose window — review it and click Send yourself in Gmail. One-click sending straight from here is coming once the Gmail connection is finished.</div>
     <div class="modal-btns">
-      <button class="modal-cancel" onclick="closeTransferModal()">Cancel</button>
-      <button class="modal-go" id="transferGoBtn" disabled onclick="confirmTransfer()">Transfer</button>
+      <button class="modal-cancel" onclick="closeEmailModal()">Cancel</button>
+      <button class="modal-go" id="emailSendBtn" onclick="sendEmail()" style="background:var(--green);">Open in Gmail →</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="settingsModal">
+  <div class="modal" style="width:580px;">
+    <div class="modal-title">Default Email Template</div>
+    <div class="merge-hint">Use <code>{{name}}</code> anywhere below and it'll be swapped for the customer's name automatically when you send. This template applies to every "Send Email" across all customers.</div>
+    <div class="modal-row">
+      <div class="modal-label">Default Subject</div>
+      <input type="text" class="modal-input" id="settingsSubject">
+    </div>
+    <div class="modal-row">
+      <div class="modal-label">Default Message</div>
+      <div class="rte-toolbar">
+        <button type="button" onclick="rteCmd('settingsBodyEditor','bold')" title="Bold"><b>B</b></button>
+        <button type="button" onclick="rteCmd('settingsBodyEditor','italic')" title="Italic"><i>I</i></button>
+        <button type="button" onclick="rteCmd('settingsBodyEditor','insertUnorderedList')" title="Bullet list">•≡</button>
+        <button type="button" onclick="rteCmd('settingsBodyEditor','insertOrderedList')" title="Numbered list">1≡</button>
+        <button type="button" onclick="rteCmd('settingsBodyEditor','removeFormat')" title="Clear formatting">Tx</button>
+      </div>
+      <div class="rte-editor" contenteditable="true" id="settingsBodyEditor"></div>
+    </div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeSettingsModal()">Cancel</button>
+      <button class="modal-go" id="settingsSaveBtn" onclick="saveSettings()" style="background:var(--green);">Save Template</button>
     </div>
   </div>
 </div>
@@ -291,7 +341,6 @@ var sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Deploy nageo-grecs-hcp-sync-function.ts as an Edge Function, then paste its exact URL here.
 var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
-var FLETT_URL = "https://www.flettexchange.com/installer/login/";
 var STORAGE_BUCKET = "grec-documents";
 
 var DOC_TYPES = [
@@ -303,8 +352,7 @@ var DOC_TYPES = [
 var MILESTONES = [
   { key:"not_started", label:"Not Started" },
   { key:"docs_in_progress", label:"Docs In Progress" },
-  { key:"ready_to_submit", label:"Ready to Submit" },
-  { key:"transferred", label:"Transferred" }
+  { key:"ready_to_submit", label:"Ready to Submit" }
 ];
 
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -459,10 +507,12 @@ async function openCustomer(id){
   if (r.error || !r.data) { showToast('Could not open that customer.'); return; }
   currentCustomer = r.data;
   await loadDocuments();
+  await loadActivity();
 
   document.getElementById('dashboardView').style.display='none';
   document.getElementById('detailView').style.display='block';
   renderDetail();
+  renderActivity();
 }
 async function loadDocuments(){
   var r = await sb.from('grec_documents').select('*').eq('customer_id', currentCustomer.id).order('uploaded_at');
@@ -482,10 +532,6 @@ function renderDetail(){
   document.getElementById('fEmail').value = currentCustomer.email || '';
   document.getElementById('fPhone').value = currentCustomer.phone || '';
   document.getElementById('fAddress').value = currentCustomer.address || '';
-
-  var isTransferred = currentCustomer.milestone_status === 'transferred';
-  document.getElementById('transferBtn').disabled = isTransferred;
-  document.getElementById('transferBtn').textContent = isTransferred ? 'Already Transferred' : 'Transfer to Flett Exchange';
 
   var curIdx = MILESTONES.findIndex(function(m){return m.key===currentCustomer.milestone_status;});
   document.getElementById('milestoneSteps').innerHTML = MILESTONES.map(function(m, i){
@@ -569,9 +615,8 @@ async function deleteDoc(docId){
 }
 
 // Milestone auto-advances based on how many of the 4 documents are on file.
-// Never overrides a "transferred" status.
 async function recomputeMilestone(){
-  if (!currentCustomer || currentCustomer.milestone_status === 'transferred') return;
+  if (!currentCustomer) return;
   var count = documents.length;
   var status = count===0 ? 'not_started' : (count<4 ? 'docs_in_progress' : 'ready_to_submit');
   if (status !== currentCustomer.milestone_status) {
@@ -581,58 +626,133 @@ async function recomputeMilestone(){
 }
 
 // ══════════════════════════════════════════════════════════
-// TRANSFER TO FLETT EXCHANGE — 3-step same-user confirmation.
-// No live Flett API connection yet (that's a future integration once Flett
-// issues API credentials) — this records the transfer locally and opens
-// Flett's site in a new tab so the details can be entered there today.
+// EMAIL TEMPLATE SETTINGS — one shared template (subject + rich-text body)
+// used as the starting point every time "Send Email" is opened. Stored in
+// grec_settings (a single row, id=1).
 // ══════════════════════════════════════════════════════════
-function openFlett(){ window.open(FLETT_URL, '_blank'); }
-
-function openTransferModal(){
-  if (!currentCustomer) return;
-  document.getElementById('transferCustName').textContent = currentCustomer.customer_name || 'this customer';
-  document.getElementById('transferPin').value = '';
-  document.getElementById('transferCheck').checked = false;
-  document.getElementById('transferName').value = '';
-  document.getElementById('transferName').placeholder = currentCustomer.customer_name || '';
-  updateTransferGate();
-  document.getElementById('transferModal').classList.add('open');
+var GREC_SETTINGS = {
+  email_subject: 'Following up on your Geothermal REC opportunity',
+  email_body_html: '<p>Hi {{name}},</p><p>Reaching out about registering your geothermal system for a Geothermal Renewable Energy Credit (GREC).</p>'
+};
+async function loadSettings(){
+  var r = await sb.from('grec_settings').select('*').eq('id', 1).single();
+  if (!r.error && r.data) GREC_SETTINGS = r.data;
 }
-function closeTransferModal(){ document.getElementById('transferModal').classList.remove('open'); }
-
-function updateTransferGate(){
-  var pinOk = document.getElementById('transferPin').value.trim() === (currentUser ? currentUser.pin : null);
-  var checkOk = document.getElementById('transferCheck').checked;
-  var nameOk = document.getElementById('transferName').value.trim().toLowerCase() === (currentCustomer ? (currentCustomer.customer_name||'').trim().toLowerCase() : '__none__') && !!(currentCustomer && currentCustomer.customer_name);
-
-  document.getElementById('stepDot1').classList.toggle('ok', pinOk);
-  document.getElementById('stepDot2').classList.toggle('ok', checkOk);
-  document.getElementById('stepDot3').classList.toggle('ok', nameOk);
-
-  document.getElementById('transferGoBtn').disabled = !(pinOk && checkOk && nameOk);
+function openSettingsModal(){
+  document.getElementById('settingsSubject').value = GREC_SETTINGS.email_subject || '';
+  document.getElementById('settingsBodyEditor').innerHTML = GREC_SETTINGS.email_body_html || '';
+  document.getElementById('settingsModal').classList.add('open');
+}
+function closeSettingsModal(){ document.getElementById('settingsModal').classList.remove('open'); }
+async function saveSettings(){
+  var subject = document.getElementById('settingsSubject').value.trim();
+  var bodyHtml = document.getElementById('settingsBodyEditor').innerHTML;
+  var btn = document.getElementById('settingsSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  var r = await sb.from('grec_settings').update({
+    email_subject: subject, email_body_html: bodyHtml, updated_at: new Date().toISOString(), updated_by: currentUser.name
+  }).eq('id', 1);
+  btn.disabled = false; btn.textContent = 'Save Template';
+  if (r.error) { showToast('Could not save template: ' + r.error.message); return; }
+  GREC_SETTINGS.email_subject = subject; GREC_SETTINGS.email_body_html = bodyHtml;
+  closeSettingsModal();
+  showToast('Email template saved.');
 }
 
-async function confirmTransfer(){
+// Rich-text toolbar — same execCommand-based approach for both editors
+// (Settings' default template and the Send Email compose box).
+function rteCmd(targetId, cmd){
+  document.getElementById(targetId).focus();
+  document.execCommand(cmd, false, null);
+}
+
+// {{name}} merge — mergeText for plain fields (subject), mergeHtml for the
+// rich-text body (escapes the name so it can't break the surrounding HTML).
+function mergeText(str, customer){ return String(str||'').replace(/\{\{\s*name\s*\}\}/gi, (customer && customer.customer_name) || 'there'); }
+function mergeHtml(str, customer){ return String(str||'').replace(/\{\{\s*name\s*\}\}/gi, esc((customer && customer.customer_name) || 'there')); }
+
+// ══════════════════════════════════════════════════════════
+// SEND EMAIL
+// Interim implementation: opens a pre-filled Gmail compose window (plain
+// text only — Gmail's compose URL can't carry bold/bullets) and logs the
+// send to the customer's activity feed. This is a placeholder for true
+// one-click sending through the Gmail API/OAuth connection tied to whoever
+// is logged in — swap the body of sendEmail() out once that's wired up.
+// ══════════════════════════════════════════════════════════
+function openEmailModal(){
   if (!currentCustomer) return;
-  var btn = document.getElementById('transferGoBtn');
-  btn.disabled = true; btn.textContent = 'Transferring…';
+  document.getElementById('emailTo').value = currentCustomer.email || '';
+  document.getElementById('emailSubject').value = mergeText(GREC_SETTINGS.email_subject, currentCustomer);
+  document.getElementById('emailBodyEditor').innerHTML = mergeHtml(GREC_SETTINGS.email_body_html, currentCustomer);
+  document.getElementById('emailModal').classList.add('open');
+}
+function closeEmailModal(){ document.getElementById('emailModal').classList.remove('open'); }
 
-  var ins = await sb.from('grec_transfers').insert({ customer_id: currentCustomer.id, transferred_by: currentUser.name, status: 'transferred' });
-  if (ins.error) { showToast('Could not record transfer: ' + ins.error.message); btn.disabled=false; btn.textContent='Transfer'; return; }
+function htmlToPlainForGmail(html){
+  var div = document.createElement('div');
+  div.innerHTML = html;
+  div.querySelectorAll('li').forEach(function(li){ li.insertAdjacentText('beforebegin', '- '); li.insertAdjacentText('afterend', '\n'); });
+  div.querySelectorAll('p,div,br').forEach(function(el){ el.insertAdjacentText('afterend', '\n'); });
+  var text = div.textContent || '';
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
 
-  var upd = await sb.from('grec_customers').update({ milestone_status: 'transferred', updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
-  if (upd.error) { showToast('Transfer logged, but could not update status: ' + upd.error.message); }
-  currentCustomer.milestone_status = 'transferred';
+async function sendEmail(){
+  if (!currentCustomer) return;
+  var to = document.getElementById('emailTo').value.trim();
+  var subject = document.getElementById('emailSubject').value.trim();
+  var bodyHtml = document.getElementById('emailBodyEditor').innerHTML;
+  if (!to) { showToast('Enter a "To" email address.'); return; }
 
-  btn.textContent = 'Transfer';
-  closeTransferModal();
-  renderDetail();
-  showToast('Transferred — opening Flett Exchange in a new tab.');
-  window.open(FLETT_URL, '_blank');
+  var plainBody = htmlToPlainForGmail(bodyHtml);
+  var gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to)
+    + '&su=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(plainBody);
+  window.open(gmailUrl, '_blank');
+
+  var ins = await sb.from('grec_activity').insert({
+    customer_id: currentCustomer.id, type: 'email_sent', message: subject || '(no subject)', created_by: currentUser.name
+  });
+  if (ins.error) { console.warn('[grecs] activity log failed', ins.error); }
+
+  closeEmailModal();
+  await loadActivity();
+  renderActivity();
+  showToast('Opened in Gmail — logged to this customer\'s activity.');
+}
+
+// ══════════════════════════════════════════════════════════
+// ACTIVITY FEED
+// ══════════════════════════════════════════════════════════
+var activity = [];
+async function loadActivity(){
+  if (!currentCustomer) return;
+  var r = await sb.from('grec_activity').select('*').eq('customer_id', currentCustomer.id).order('created_at', { ascending:false });
+  activity = r.data || [];
+}
+function timeAgo(ts){
+  if (!ts) return '';
+  var d = Math.floor((Date.now()-new Date(ts))/1000);
+  if (d<60) return 'just now';
+  if (d<3600) return Math.floor(d/60)+'m ago';
+  if (d<86400) return Math.floor(d/3600)+'h ago';
+  return Math.floor(d/86400)+'d ago';
+}
+function renderActivity(){
+  var el = document.getElementById('activityList');
+  if (!el) return;
+  if (!activity.length) { el.innerHTML = '<div class="activity-empty">No activity yet.</div>'; return; }
+  el.innerHTML = activity.map(function(a){
+    var label = a.type==='email_sent' ? 'Email sent: ' : '';
+    return '<div class="activity-row"><div class="activity-main">'
+      + '<div class="activity-msg">'+esc(label)+esc(a.message||'')+'</div>'
+      + '<div class="activity-meta">by '+esc(a.created_by||'—')+' · '+timeAgo(a.created_at)+'</div>'
+      + '</div></div>';
+  }).join('');
 }
 
 // ── Boot ──
 initAuth();
+loadSettings();
 </script>
 </body>
 </html>
