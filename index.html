@@ -1040,11 +1040,14 @@ function closeGmailDefaultModal(){ document.getElementById('gmailDefaultModal').
 var GREC_SETTINGS = {
   email_subject: 'Following up on your Geothermal REC opportunity',
   email_body_html: '<p>Hi {{name}},</p><p>Reaching out about registering your geothermal system for a Geothermal Renewable Energy Credit (GREC).</p>',
-  grec_contact_email: ''
+  grec_contact_email: 'wade@clearpathrenewables.com'
 };
 async function loadSettings(){
   var r = await sb.from('grec_settings').select('*').eq('id', 1).single();
   if (!r.error && r.data) GREC_SETTINGS = r.data;
+  // Fall back to the default GREC contact if the DB value is empty (e.g. the
+  // latest setup-grecs-tables.sql hasn't been re-run yet on this project).
+  if (!GREC_SETTINGS.grec_contact_email) GREC_SETTINGS.grec_contact_email = 'wade@clearpathrenewables.com';
 }
 function openSettingsModal(){
   loadGmailPool();
