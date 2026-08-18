@@ -166,6 +166,26 @@ button,input,select,textarea{font-family:inherit;}
 .reply-badge{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:999px;white-space:nowrap;}
 .reply-badge.replied{background:rgba(67,160,71,.16);color:var(--green-light);}
 .reply-badge.no_reply{background:rgba(255,255,255,.08);color:var(--text-dimmer);}
+
+/* ── Email thread view — sent + reply(s) as collapsible tiles, each
+   rendered inside a sandboxed iframe so the raw HTML a mail client hands
+   back (its own <style>/<head>, quoted history, tracking pixels, etc.)
+   can't break the app's own page styling. ── */
+.thread-tiles{display:flex;flex-direction:column;gap:8px;}
+.thread-tile{border:1px solid var(--glass-border);border-radius:10px;overflow:hidden;background:var(--glass);}
+.thread-tile-hdr{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none;}
+.thread-tile-hdr:hover{background:var(--glass-hover);}
+.tile-badge{font-size:9.5px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:999px;flex-shrink:0;}
+.tile-badge-sent{background:rgba(96,165,250,.16);color:#93c5fd;}
+.tile-badge-received{background:rgba(67,160,71,.16);color:var(--green-light);}
+.tile-who{flex:1;font-size:13px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.tile-date{font-size:11px;color:var(--text-dimmer);white-space:nowrap;flex-shrink:0;}
+.tile-chevron{font-size:11px;color:var(--text-dimmer);transition:transform .15s;flex-shrink:0;}
+.thread-tile.open .tile-chevron{transform:rotate(180deg);}
+.thread-tile-body{max-height:0;overflow:hidden;transition:max-height .2s ease;}
+.thread-tile.open .thread-tile-body{max-height:520px;overflow-y:auto;padding:0 12px 12px;}
+.email-frame-card{border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:#fff;max-height:480px;overflow-y:auto;}
+.fe-frame{width:100%;border:none;display:block;background:#fff;min-height:40px;}
 .gmail-row-email{font-size:13.5px;font-weight:700;}
 .gmail-row-sub{font-size:11.5px;color:var(--text-dimmer);margin-top:2px;}
 .gmail-default-tag{font-size:10.5px;font-weight:700;color:var(--green-light);background:rgba(67,160,71,.14);padding:3px 8px;border-radius:999px;}
@@ -396,11 +416,12 @@ button,input,select,textarea{font-family:inherit;}
 </div>
 
 <div class="modal-bg" id="viewEmailModal">
-  <div class="modal" style="width:580px;max-height:88vh;overflow-y:auto;">
-    <div class="modal-title" id="viewEmailModalTitle">Sent Email</div>
+  <div class="modal" style="width:600px;max-width:95vw;max-height:88vh;overflow-y:auto;">
+    <div class="modal-title" id="viewEmailModalTitle">Email</div>
     <div class="merge-hint" id="viewEmailMeta"></div>
-    <div class="rte-editor" id="viewEmailBody" style="cursor:default;"></div>
+    <div id="viewEmailThreadTiles"></div>
     <div class="modal-btns">
+      <button class="modal-cancel" id="viewEmailCheckReplyBtn" onclick="checkEmailReplyInModal()" style="display:none;">Check for reply</button>
       <button class="modal-cancel" onclick="closeViewEmailModal()">Close</button>
     </div>
   </div>
@@ -1094,7 +1115,6 @@ function renderActivity(){
   if (!activity.length) { el.innerHTML = '<div class="activity-empty">No activity yet.</div>'; return; }
   el.innerHTML = activity.map(function(a){
     var label = a.type==='email_sent' ? 'Email sent: ' : '';
-    var canCheckReply = a.type==='email_sent' && a.gmail_thread_id && a.sent_from_email;
     var replyBadge = '';
     if (a.reply_status === 'replied') {
       replyBadge = '<span class="reply-badge replied">↩ Replied' + (a.reply_checked_at ? ' — checked ' + timeAgo(a.reply_checked_at) : '') + '</span>';
@@ -1105,37 +1125,113 @@ function renderActivity(){
       + '<div class="activity-msg">'+esc(label)+esc(a.message||'')+'</div>'
       + '<div class="activity-meta">by '+esc(a.created_by||'—')+' · '+timeAgo(a.created_at)+'</div>'
       + '<div class="activity-badges">'
-        + (a.type==='email_sent' && a.email_html ? '<button class="btn btn-sm" onclick="openViewEmail(\''+a.id+'\')">View email</button>' : '')
-        + (canCheckReply ? '<button class="btn btn-sm" onclick="checkReplyForActivity(\''+a.id+'\')">Check for reply</button>' : '')
-        + (a.reply_status==='replied' && a.reply_html ? '<button class="btn btn-sm" onclick="openViewReply(\''+a.id+'\')">View reply</button>' : '')
+        + (a.type==='email_sent' && a.email_html ? '<button class="btn btn-sm" onclick="openViewEmail(\''+a.id+'\')">View Email</button>' : '')
         + replyBadge
       + '</div>'
       + '</div></div>';
   }).join('');
 }
 
+// ── View Email modal — shows the whole conversation (what we sent, plus
+// any reply/replies) as collapsible tiles, each rendered inside its own
+// sandboxed iframe. "Check for reply" lives in here now instead of as a
+// separate row button, since it only makes sense while looking at a thread. ──
+var activeViewEmailId = null;
 function openViewEmail(activityId){
   var a = activity.find(function(x){ return x.id===activityId; });
   if (!a) return;
-  document.getElementById('viewEmailModalTitle').textContent = 'Sent Email';
-  document.getElementById('viewEmailMeta').textContent = 'To ' + (a.email_to||'—') + (a.sent_from_email ? ' · from ' + a.sent_from_email : '') + ' · ' + timeAgo(a.created_at);
-  document.getElementById('viewEmailBody').innerHTML = a.email_html || '<em>No content saved.</em>';
+  activeViewEmailId = activityId;
+  document.getElementById('viewEmailModalTitle').textContent = 'Email';
+  document.getElementById('viewEmailMeta').textContent = 'To ' + (a.email_to||'—') + (a.sent_from_email ? ' · from ' + a.sent_from_email : '') + ' · sent ' + timeAgo(a.created_at);
+  renderViewEmailTiles(a);
+  var checkBtn = document.getElementById('viewEmailCheckReplyBtn');
+  checkBtn.style.display = (a.gmail_thread_id && a.sent_from_email) ? 'inline-block' : 'none';
+  checkBtn.textContent = 'Check for reply';
+  checkBtn.disabled = false;
   document.getElementById('viewEmailModal').classList.add('open');
 }
-function openViewReply(activityId){
-  var a = activity.find(function(x){ return x.id===activityId; });
-  if (!a) return;
-  document.getElementById('viewEmailModalTitle').textContent = 'Their Reply';
-  document.getElementById('viewEmailMeta').textContent = (a.reply_from ? 'From ' + a.reply_from : 'From ' + (a.email_to||'—')) + (a.reply_checked_at ? ' · seen ' + timeAgo(a.reply_checked_at) : '');
-  document.getElementById('viewEmailBody').innerHTML = a.reply_html || '<em>No reply content saved — try "Check for reply" again.</em>';
-  document.getElementById('viewEmailModal').classList.add('open');
-}
-function closeViewEmailModal(){ document.getElementById('viewEmailModal').classList.remove('open'); }
+function closeViewEmailModal(){ document.getElementById('viewEmailModal').classList.remove('open'); activeViewEmailId = null; }
 
-async function checkReplyForActivity(activityId){
-  var a = activity.find(function(x){ return x.id===activityId; });
+function renderViewEmailTiles(a){
+  var box = document.getElementById('viewEmailThreadTiles');
+  if (!box) return;
+  var tiles = [{ kind:'sent', who: a.email_to || '—', date: a.created_at, html: a.email_html }];
+  if (a.reply_thread && a.reply_thread.length) {
+    a.reply_thread.forEach(function(msg){
+      tiles.push({ kind:'received', who: msg.from || 'Reply', date: msg.date, html: msg.html, text: msg.text });
+    });
+  } else if (a.reply_status === 'replied' && (a.reply_html || a.reply_from)) {
+    // Old rows checked before per-message threads were tracked — fall back
+    // to the single latest-reply snapshot that was saved.
+    tiles.push({ kind:'received', who: a.reply_from || 'Reply', date: a.reply_checked_at, html: a.reply_html });
+  }
+  var html = '';
+  if (a.gmail_thread_id && a.reply_status !== 'replied') {
+    html += '<div class="merge-hint" style="margin-bottom:10px;">No reply detected yet' + (a.reply_checked_at ? ' — last checked ' + timeAgo(a.reply_checked_at) : '') + '.</div>';
+  }
+  html += '<div class="thread-tiles">';
+  tiles.forEach(function(t, idx){
+    var isSent = t.kind === 'sent';
+    var dateStr = t.date ? new Date(t.date).toLocaleString() : '';
+    var openLast = idx === tiles.length - 1;
+    var hasContent = !!(t.html && t.html.trim()) || !!(t.text && t.text.trim());
+    html += '<div class="thread-tile'+(openLast?' open':'')+'" data-idx="'+idx+'">';
+    html += '<div class="thread-tile-hdr" onclick="toggleThreadTile(this)">';
+    html += '<span class="tile-badge '+(isSent?'tile-badge-sent':'tile-badge-received')+'">'+(isSent?'SENT':'RECEIVED')+'</span>';
+    html += '<span class="tile-who">'+esc(t.who||'—')+'</span>';
+    html += '<span class="tile-date">'+esc(dateStr)+'</span>';
+    html += '<span class="tile-chevron">▾</span>';
+    html += '</div><div class="thread-tile-body">';
+    html += hasContent
+      ? '<div class="email-frame-card"><iframe class="fe-frame" id="thread-frame-'+idx+'" sandbox="allow-popups allow-same-origin" title="Message"></iframe></div>'
+      : '<div style="font-size:12px;color:var(--text-dimmer);font-style:italic;padding:10px 0;">No content saved for this message.</div>';
+    html += '</div></div>';
+  });
+  html += '</div>';
+  box.innerHTML = html;
+  tiles.forEach(function(t, idx){
+    var frame = document.getElementById('thread-frame-'+idx);
+    if (!frame) return;
+    var content = (t.html && t.html.trim()) ? t.html : (t.text ? esc(t.text).replace(/\n/g,'<br>') : '');
+    if (content) fillEmailFrame(frame, content);
+  });
+}
+function toggleThreadTile(hdrEl){
+  var tile = hdrEl.closest('.thread-tile');
+  if (tile) tile.classList.toggle('open');
+}
+// Builds a fully separate, sandboxed HTML document for the iframe (not part
+// of our page), so it intentionally uses plain literal colors here rather
+// than the app's var(--...) custom properties, which wouldn't resolve
+// inside the iframe's own isolated stylesheet.
+function fillEmailFrame(iframe, htmlContent){
+  if (!iframe) return;
+  var trimmed = htmlContent && htmlContent.trim();
+  var doc;
+  if (!trimmed) {
+    doc = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;color:#888;background:#fff;}</style></head><body><em>No content received.</em></body></html>';
+  } else if (/^\s*<!DOCTYPE html|^\s*<html/i.test(trimmed)) {
+    doc = trimmed;
+  } else {
+    doc = '<!DOCTYPE html><html><head><meta charset="utf-8">'
+      + '<style>*{box-sizing:border-box;}body{margin:0;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.55;color:#1a1a1a;background:#fff;word-wrap:break-word;overflow-wrap:break-word;}img{max-width:100%;height:auto;}a{color:#2563eb;}table{max-width:100%;}</style>'
+      + '</head><body>' + trimmed + '</body></html>';
+  }
+  iframe.onload = function(){
+    try {
+      var h = iframe.contentWindow.document.body.scrollHeight;
+      iframe.style.height = Math.max(40, h + 4) + 'px';
+    } catch (e) { iframe.style.height = '200px'; }
+  };
+  iframe.setAttribute('srcdoc', doc);
+}
+
+async function checkEmailReplyInModal(){
+  if (!activeViewEmailId) return;
+  var a = activity.find(function(x){ return x.id===activeViewEmailId; });
   if (!a || !a.gmail_thread_id || !a.sent_from_email) return;
-  showToast('Checking for a reply…');
+  var btn = document.getElementById('viewEmailCheckReplyBtn');
+  btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Checking…';
   try {
     var res = await fetch(GREC_SEND_EMAIL_URL, {
       method: 'POST',
@@ -1143,23 +1239,25 @@ async function checkReplyForActivity(activityId){
       body: JSON.stringify({ action: 'check_reply', google_email: a.sent_from_email, gmail_thread_id: a.gmail_thread_id })
     });
     var data = await res.json();
-    if (!res.ok || data.error) { showToast('Could not check: ' + (data.error || 'unknown error')); return; }
+    if (!res.ok || data.error) { showToast('Could not check: ' + (data.error || 'unknown error')); btn.disabled=false; btn.textContent=orig; return; }
     var status = data.replied ? 'replied' : 'no_reply';
     var checkedAt = new Date().toISOString();
     var updateRow = { reply_status: status, reply_checked_at: checkedAt };
     if (data.replied) {
       updateRow.reply_from = data.latest_from || null;
       updateRow.reply_html = data.latest_html || null;
+      updateRow.reply_thread = (data.thread && data.thread.length) ? data.thread : null;
     }
-    await sb.from('grec_activity').update(updateRow).eq('id', activityId);
-    a.reply_status = status; a.reply_checked_at = checkedAt;
-    if (data.replied) { a.reply_from = updateRow.reply_from; a.reply_html = updateRow.reply_html; }
+    await sb.from('grec_activity').update(updateRow).eq('id', a.id);
+    Object.assign(a, updateRow);
+    renderViewEmailTiles(a);
     renderActivity();
-    showToast(data.replied ? 'They\'ve replied.' : 'No reply yet.');
+    showToast(data.replied ? 'Reply found.' : 'No reply yet.');
   } catch (e) {
     console.error(e);
     showToast('Could not check for a reply — see console.');
   }
+  btn.disabled = false; btn.textContent = 'Check for reply';
 }
 
 // ── Boot ──
