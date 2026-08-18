@@ -93,8 +93,19 @@ button,input,select,textarea{font-family:inherit;}
   transition:all .15s;display:flex;flex-direction:column;gap:10px;
 }
 .customer-tile:hover{background:var(--glass-hover);border-color:rgba(67,160,71,.35);transform:translateY(-1px);}
-.customer-tile.tile-emailed{background:linear-gradient(135deg,rgba(251,191,36,.16),rgba(251,191,36,.05));border-color:rgba(251,191,36,.5);}
-.customer-tile.tile-emailed:hover{background:linear-gradient(135deg,rgba(251,191,36,.22),rgba(251,191,36,.08));border-color:rgba(251,191,36,.65);}
+.customer-tile.tile-gold{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(251,191,36,.06));border-color:rgba(251,191,36,.55);}
+.customer-tile.tile-gold:hover{background:linear-gradient(135deg,rgba(251,191,36,.24),rgba(251,191,36,.09));border-color:rgba(251,191,36,.7);}
+.customer-tile.tile-gold::after{
+  content:'';position:absolute;top:0;left:-60%;width:45%;height:100%;
+  background:linear-gradient(115deg,transparent 0%,rgba(255,255,255,.55) 45%,rgba(255,236,170,.85) 50%,rgba(255,255,255,.55) 55%,transparent 100%);
+  transform:skewX(-18deg);mix-blend-mode:overlay;pointer-events:none;
+  animation:tileShimmer 3.4s ease-in-out infinite;
+}
+@keyframes tileShimmer{0%{left:-60%;}40%{left:130%;}100%{left:130%;}}
+@media (prefers-reduced-motion:reduce){.customer-tile.tile-gold::after{animation:none;display:none;}}
+.tile-gold-toggle{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--glass-border);background:var(--glass);color:var(--text-dimmer);cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0;}
+.tile-gold-toggle:hover{background:var(--glass-hover);color:var(--text);}
+.tile-gold-toggle.active{background:rgba(251,191,36,.3);border-color:rgba(251,191,36,.65);color:#fde68a;}
 .filter-result-count{font-size:12.5px;color:var(--text-dimmer);margin-bottom:.9rem;}
 .pill-toggle{cursor:pointer;}
 .pill-toggle:hover{filter:brightness(1.15);}
@@ -110,6 +121,7 @@ button,input,select,textarea{font-family:inherit;}
 .pill-status{background:rgba(255,255,255,.08);color:var(--text-dim);}
 .pill-status.emailed{background:rgba(67,160,71,.16);color:var(--green-light);}
 .pill-status.called{background:rgba(245,158,11,.18);color:#fbbf24;}
+.pill-status.grec_notified{background:rgba(45,212,191,.18);color:#5eead4;}
 .tile-meta{font-size:12.5px;color:var(--text-dim);}
 .tile-docs{font-size:12px;color:var(--text-dimmer);}
 .dash-empty{padding:4rem 1rem;text-align:center;color:var(--text-dimmer);grid-column:1/-1;}
@@ -281,7 +293,9 @@ button,input,select,textarea{font-family:inherit;}
         <option value="">All Milestones</option>
         <option value="not_started">Not Started</option>
         <option value="emailed">Emailed</option>
+        <option value="grec_notified">GREC Notified</option>
         <option value="called">Called</option>
+        <option value="gold">Fully Handled (gold)</option>
       </select>
       <select class="dash-select" id="cityFilterSelect" onchange="renderDashboard()">
         <option value="">All Cities</option>
@@ -309,7 +323,8 @@ button,input,select,textarea{font-family:inherit;}
         <div class="detail-badges" id="detailBadges"></div>
       </div>
       <div class="detail-actions">
-        <button class="btn btn-accent btn-sm" onclick="openEmailModal()">✉ Send Email</button>
+        <button class="btn btn-accent btn-sm" onclick="openEmailModal('customer')">✉ Send Email</button>
+        <button class="btn btn-accent btn-sm" onclick="openEmailModal('grec')" style="background:var(--green-deep);">✉ Email GREC</button>
       </div>
     </div>
 
@@ -344,7 +359,7 @@ button,input,select,textarea{font-family:inherit;}
 
 <div class="modal-bg" id="emailModal">
   <div class="modal" style="width:580px;">
-    <div class="modal-title">Send Email</div>
+    <div class="modal-title" id="emailModalTitle">Send Email</div>
     <div class="modal-row">
       <div class="modal-label">Sending as</div>
       <select class="modal-select" id="emailFromSelect" onchange="onEmailFromChange()"></select>
@@ -384,6 +399,13 @@ button,input,select,textarea{font-family:inherit;}
     <div class="modal-btns" style="justify-content:flex-start;margin-top:0;margin-bottom:1.6rem;">
       <button class="btn btn-sm" onclick="connectGmail()">+ Connect Gmail</button>
       <button class="btn btn-sm" onclick="loadGmailPool()">⟳ Refresh</button>
+    </div>
+
+    <div class="modal-title">GREC Contact</div>
+    <div class="merge-hint">Where the "✉ Email GREC" button on a customer's page sends its notification — includes that customer's name, address, phone, and email automatically.</div>
+    <div class="modal-row">
+      <div class="modal-label">GREC Contact Email</div>
+      <input type="email" class="modal-input" id="settingsGrecEmail" placeholder="grec@example.com">
     </div>
 
     <div class="modal-title">Default Email Template</div>
@@ -450,20 +472,28 @@ var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
 var GREC_SEND_EMAIL_URL = SUPABASE_URL + "/functions/v1/grec-send-email";
 var STORAGE_BUCKET = "grec-documents";
 
-// Milestones are two independent toggles now (emailed / called) — either,
-// both, or neither can be true. "Not Started" isn't a toggle, it's just
-// what's shown when neither flag is set.
+// Milestones are three independent toggles now (emailed / GREC notified /
+// called) — any combination can be true. "Not Started" isn't a toggle,
+// it's just what's shown when none of the flags are set.
 var MILESTONE_TOGGLES = [
   { field:"milestone_emailed", label:"Emailed" },
+  { field:"milestone_grec_notified", label:"GREC Notified" },
   { field:"milestone_called", label:"Called" }
 ];
-// tileMode=true (dashboard tiles) makes the Emailed/Called pills clickable
-// to toggle off right from the grid, without opening the customer's page.
+// tileMode=true (dashboard tiles) makes every pill clickable to toggle off
+// right from the grid, without opening the customer's page.
+var MILESTONE_PILL_CLASS = { milestone_emailed:'emailed', milestone_grec_notified:'grec_notified', milestone_called:'called' };
 function milestoneBadgesHtml(c, tileMode){
-  if (!c.milestone_emailed && !c.milestone_called) return '<span class="pill pill-status">Not Started</span>';
+  var noneSet = MILESTONE_TOGGLES.every(function(m){ return !c[m.field]; });
+  if (noneSet) return '<span class="pill pill-status">Not Started</span>';
   var out = '';
-  if (c.milestone_emailed) out += '<span class="pill pill-status emailed'+(tileMode?' pill-toggle':'')+'"'+(tileMode?' onclick="toggleTileMilestone(\''+c.id+'\',\'milestone_emailed\',event)" title="Click to un-mark as emailed"':'')+'>Emailed</span>';
-  if (c.milestone_called) out += '<span class="pill pill-status called'+(tileMode?' pill-toggle':'')+'"'+(tileMode?' onclick="toggleTileMilestone(\''+c.id+'\',\'milestone_called\',event)" title="Click to un-mark as called"':'')+'>Called</span>';
+  MILESTONE_TOGGLES.forEach(function(m){
+    if (!c[m.field]) return;
+    var cls = MILESTONE_PILL_CLASS[m.field] || '';
+    out += '<span class="pill pill-status '+cls+(tileMode?' pill-toggle':'')+'"'
+      + (tileMode ? ' onclick="toggleTileMilestone(\''+c.id+'\',\''+m.field+'\',event)" title="Click to un-mark as '+esc(m.label.toLowerCase())+'"' : '')
+      + '>'+esc(m.label)+'</span>';
+  });
   return out;
 }
 
@@ -614,6 +644,9 @@ function customerType(c){
   if (c.id_prefix==='5' || c.id_prefix==='6') return 'service';
   return '';
 }
+// "Fully handled" — both the customer AND the GREC contact have been
+// emailed about this one. Drives the shimmering gold tile.
+function isGoldCustomer(c){ return !!(c.milestone_emailed && c.milestone_grec_notified); }
 
 async function showDashboard(){
   document.getElementById('detailView').style.display='none';
@@ -673,9 +706,11 @@ function renderDashboard(){
     if (q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(q)) return false;
     if (typeFilter && customerType(c) !== typeFilter) return false;
     if (stateFilter && c.state !== stateFilter) return false;
-    if (milestoneFilter === 'not_started' && (c.milestone_emailed || c.milestone_called)) return false;
+    if (milestoneFilter === 'not_started' && (c.milestone_emailed || c.milestone_called || c.milestone_grec_notified)) return false;
     if (milestoneFilter === 'emailed' && !c.milestone_emailed) return false;
+    if (milestoneFilter === 'grec_notified' && !c.milestone_grec_notified) return false;
     if (milestoneFilter === 'called' && !c.milestone_called) return false;
+    if (milestoneFilter === 'gold' && !isGoldCustomer(c)) return false;
     if (cityFilter && canonicalCity(c) !== cityFilter) return false;
     return true;
   });
@@ -695,8 +730,11 @@ function renderDashboard(){
   }
   grid.innerHTML = list.map(function(c){
     var docCount = docCountByCustomer[c.id] || 0;
-    return '<div class="customer-tile'+(c.milestone_emailed?' tile-emailed':'')+'" onclick="openCustomer(\''+c.id+'\')">'
-      + '<div class="tile-top"><div><div class="tile-name">'+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div></div>'
+    var isGold = isGoldCustomer(c);
+    return '<div class="customer-tile'+(isGold?' tile-gold':'')+'" onclick="openCustomer(\''+c.id+'\')">'
+      + '<div class="tile-top"><div><div class="tile-name">'+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div>'
+      + '<button type="button" class="tile-gold-toggle'+(isGold?' active':'')+'" onclick="toggleGoldQuick(\''+c.id+'\',event)" title="'+(isGold?'Mark not fully handled':'Mark fully handled (emailed + GREC notified)')+'">✨</button>'
+      + '</div>'
       + '<div class="tile-badges">'
         + '<span class="pill '+(customerType(c)==='service'?'pill-service':'pill-install')+'">'+esc(customerType(c)==='service'?'Service':'Install')+'</span>'
         + '<span class="pill '+(c.state==='MD'?'pill-md':'pill-va')+'">'+esc(c.state)+'</span>'
@@ -843,6 +881,27 @@ async function toggleTileMilestone(customerId, field, evt){
   renderDashboard();
 }
 
+// The little ✨ button on a tile — a one-click shortcut that forces both
+// milestone_emailed and milestone_grec_notified to the same value, so you
+// can mark (or unmark) a customer as fully handled without sending real
+// emails through the app (e.g. you called GREC instead) or without toggling
+// both pills separately.
+async function toggleGoldQuick(customerId, evt){
+  if (evt) { evt.stopPropagation(); }
+  var c = customers.find(function(x){ return x.id===customerId; });
+  if (!c) return;
+  var newVal = !isGoldCustomer(c);
+  var updates = { milestone_emailed: newVal, milestone_grec_notified: newVal, updated_at: new Date().toISOString() };
+  var r = await sb.from('grec_customers').update(updates).eq('id', customerId);
+  if (r.error) { showToast('Could not update: ' + r.error.message); return; }
+  c.milestone_emailed = newVal; c.milestone_grec_notified = newVal;
+  if (currentCustomer && currentCustomer.id === customerId) {
+    currentCustomer.milestone_emailed = newVal; currentCustomer.milestone_grec_notified = newVal;
+  }
+  renderDashboard();
+  showToast(newVal ? 'Marked fully handled.' : 'Marked not yet complete.');
+}
+
 var detailDirty = false;
 function onDetailFieldInput(){ detailDirty = true; clearTimeout(window._detailSaveTimer); window._detailSaveTimer = setTimeout(saveDetailFields, 800); }
 async function saveDetailFields(){
@@ -980,7 +1039,8 @@ function closeGmailDefaultModal(){ document.getElementById('gmailDefaultModal').
 // ══════════════════════════════════════════════════════════
 var GREC_SETTINGS = {
   email_subject: 'Following up on your Geothermal REC opportunity',
-  email_body_html: '<p>Hi {{name}},</p><p>Reaching out about registering your geothermal system for a Geothermal Renewable Energy Credit (GREC).</p>'
+  email_body_html: '<p>Hi {{name}},</p><p>Reaching out about registering your geothermal system for a Geothermal Renewable Energy Credit (GREC).</p>',
+  grec_contact_email: ''
 };
 async function loadSettings(){
   var r = await sb.from('grec_settings').select('*').eq('id', 1).single();
@@ -988,21 +1048,24 @@ async function loadSettings(){
 }
 function openSettingsModal(){
   loadGmailPool();
+  document.getElementById('settingsGrecEmail').value = GREC_SETTINGS.grec_contact_email || '';
   document.getElementById('settingsSubject').value = GREC_SETTINGS.email_subject || '';
   document.getElementById('settingsBodyEditor').innerHTML = GREC_SETTINGS.email_body_html || '';
   document.getElementById('settingsModal').classList.add('open');
 }
 function closeSettingsModal(){ document.getElementById('settingsModal').classList.remove('open'); }
 async function saveSettings(){
+  var grecEmail = document.getElementById('settingsGrecEmail').value.trim();
   var subject = document.getElementById('settingsSubject').value.trim();
   var bodyHtml = document.getElementById('settingsBodyEditor').innerHTML;
   var btn = document.getElementById('settingsSaveBtn');
   btn.disabled = true; btn.textContent = 'Saving…';
   var r = await sb.from('grec_settings').update({
-    email_subject: subject, email_body_html: bodyHtml, updated_at: new Date().toISOString(), updated_by: currentUser.name
+    grec_contact_email: grecEmail, email_subject: subject, email_body_html: bodyHtml, updated_at: new Date().toISOString(), updated_by: currentUser.name
   }).eq('id', 1);
   btn.disabled = false; btn.textContent = 'Save Template';
   if (r.error) { showToast('Could not save template: ' + r.error.message); return; }
+  GREC_SETTINGS.grec_contact_email = grecEmail;
   GREC_SETTINGS.email_subject = subject; GREC_SETTINGS.email_body_html = bodyHtml;
   closeSettingsModal();
   showToast('Email template saved.');
@@ -1052,11 +1115,33 @@ function onEmailFromChange(){
   }
 }
 
-async function openEmailModal(){
+// "customer" = the existing customer-facing template email. "grec" = an
+// internal notification to whoever's set as the GREC contact (Settings),
+// auto-filled with this customer's name/address/phone/email — still
+// editable before sending, same as the customer email.
+var activeEmailMode = 'customer';
+function buildGrecNotificationHtml(c){
+  return '<p>New GREC candidate ready:</p>'
+    + '<p><strong>Name:</strong> ' + esc(c.customer_name||'—') + '<br>'
+    + '<strong>Address:</strong> ' + esc(c.address||'—') + '<br>'
+    + '<strong>Phone:</strong> ' + esc(c.phone||'—') + '<br>'
+    + '<strong>Email:</strong> ' + esc(c.email||'—') + '</p>';
+}
+async function openEmailModal(mode){
   if (!currentCustomer) return;
-  document.getElementById('emailTo').value = currentCustomer.email || '';
-  document.getElementById('emailSubject').value = mergeText(GREC_SETTINGS.email_subject, currentCustomer);
-  document.getElementById('emailBodyEditor').innerHTML = mergeHtml(GREC_SETTINGS.email_body_html, currentCustomer);
+  activeEmailMode = mode || 'customer';
+  if (activeEmailMode === 'grec') {
+    document.getElementById('emailModalTitle').textContent = 'Email GREC';
+    document.getElementById('emailTo').value = GREC_SETTINGS.grec_contact_email || '';
+    document.getElementById('emailSubject').value = 'GREC Candidate: ' + (currentCustomer.customer_name || 'Unknown');
+    document.getElementById('emailBodyEditor').innerHTML = buildGrecNotificationHtml(currentCustomer);
+    if (!GREC_SETTINGS.grec_contact_email) showToast('No GREC contact email set yet — add one in ⚙ Email Template → GREC Contact.');
+  } else {
+    document.getElementById('emailModalTitle').textContent = 'Send Email';
+    document.getElementById('emailTo').value = currentCustomer.email || '';
+    document.getElementById('emailSubject').value = mergeText(GREC_SETTINGS.email_subject, currentCustomer);
+    document.getElementById('emailBodyEditor').innerHTML = mergeHtml(GREC_SETTINGS.email_body_html, currentCustomer);
+  }
   populateEmailFromSelect();
   onEmailFromChange();
   document.getElementById('emailModal').classList.add('open');
@@ -1083,8 +1168,9 @@ async function sendEmail(){
   var btn = document.getElementById('emailSendBtn');
   btn.disabled = true; var origText = btn.textContent; btn.textContent = 'Sending…';
 
+  var isGrecMode = activeEmailMode === 'grec';
   var activityRow = {
-    customer_id: currentCustomer.id, type: 'email_sent', message: subject || '(no subject)',
+    customer_id: currentCustomer.id, type: isGrecMode ? 'email_grec_notified' : 'email_sent', message: subject || '(no subject)',
     email_html: bodyHtml, email_to: to, sent_from_email: fromEmail || null, created_by: currentUser.name
   };
 
@@ -1112,9 +1198,12 @@ async function sendEmail(){
   var ins = await sb.from('grec_activity').insert(activityRow);
   if (ins.error) { console.warn('[grecs] activity log failed', ins.error); }
 
-  if (!currentCustomer.milestone_emailed) {
-    var mUpd = await sb.from('grec_customers').update({ milestone_emailed: true, updated_at: new Date().toISOString() }).eq('id', currentCustomer.id);
-    if (!mUpd.error) currentCustomer.milestone_emailed = true;
+  var milestoneField = isGrecMode ? 'milestone_grec_notified' : 'milestone_emailed';
+  if (!currentCustomer[milestoneField]) {
+    var mUpdates = { updated_at: new Date().toISOString() };
+    mUpdates[milestoneField] = true;
+    var mUpd = await sb.from('grec_customers').update(mUpdates).eq('id', currentCustomer.id);
+    if (!mUpd.error) currentCustomer[milestoneField] = true;
   }
 
   btn.disabled = false; btn.textContent = origText;
@@ -1122,7 +1211,7 @@ async function sendEmail(){
   await loadActivity();
   renderActivity();
   renderDetail();
-  showToast(fromEmail ? 'Email sent.' : 'Opened in Gmail — logged to activity.');
+  showToast(fromEmail ? (isGrecMode ? 'GREC notified.' : 'Email sent.') : 'Opened in Gmail — logged to activity.');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1147,7 +1236,8 @@ function renderActivity(){
   if (!el) return;
   if (!activity.length) { el.innerHTML = '<div class="activity-empty">No activity yet.</div>'; return; }
   el.innerHTML = activity.map(function(a){
-    var label = a.type==='email_sent' ? 'Email sent: ' : '';
+    var label = a.type==='email_sent' ? 'Email sent: ' : a.type==='email_grec_notified' ? 'GREC notified: ' : '';
+    var isEmailType = a.type==='email_sent' || a.type==='email_grec_notified';
     var replyBadge = '';
     if (a.reply_status === 'replied') {
       replyBadge = '<span class="reply-badge replied">↩ Replied' + (a.reply_checked_at ? ' — checked ' + timeAgo(a.reply_checked_at) : '') + '</span>';
@@ -1158,7 +1248,7 @@ function renderActivity(){
       + '<div class="activity-msg">'+esc(label)+esc(a.message||'')+'</div>'
       + '<div class="activity-meta">by '+esc(a.created_by||'—')+' · '+timeAgo(a.created_at)+'</div>'
       + '<div class="activity-badges">'
-        + (a.type==='email_sent' && a.email_html ? '<button class="btn btn-sm" onclick="openViewEmail(\''+a.id+'\')">View Email</button>' : '')
+        + (isEmailType && a.email_html ? '<button class="btn btn-sm" onclick="openViewEmail(\''+a.id+'\')">View Email</button>' : '')
         + replyBadge
       + '</div>'
       + '</div></div>';
