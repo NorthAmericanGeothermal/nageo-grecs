@@ -100,7 +100,8 @@ button,input,select,textarea{font-family:inherit;}
 .pill{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:4px 9px;border-radius:999px;white-space:nowrap;}
 .pill-md{background:rgba(96,165,250,.16);color:#93c5fd;}
 .pill-va{background:rgba(67,160,71,.16);color:var(--green-light);}
-.pill-cutoff{background:rgba(245,158,11,.18);color:#fbbf24;}
+.pill-install{background:rgba(139,92,246,.18);color:#c4b5fd;}
+.pill-service{background:rgba(245,158,11,.18);color:#fbbf24;}
 .pill-status{background:rgba(255,255,255,.08);color:var(--text-dim);}
 .pill-status.emailed{background:rgba(67,160,71,.16);color:var(--green-light);}
 .pill-status.called{background:rgba(245,158,11,.18);color:#fbbf24;}
@@ -235,21 +236,28 @@ button,input,select,textarea{font-family:inherit;}
 
     <div class="stats-bar">
       <div class="stat-card"><div class="stat-num" id="statTotal">0</div><div class="stat-label">Total Candidates</div></div>
-      <div class="stat-card"><div class="stat-num" id="statMd">0</div><div class="stat-label">Maryland</div></div>
-      <div class="stat-card"><div class="stat-num" id="statVa">0</div><div class="stat-label">Virginia</div></div>
-      <div class="stat-card"><div class="stat-num" id="statCutoff">0</div><div class="stat-label">VA — Pre-8/16/22</div></div>
-    </div>
-
-    <div class="filter-tabs" id="filterTabs">
-      <div class="filter-tab active" data-filter="all" onclick="setFilter('all')">All</div>
-      <div class="filter-tab" data-filter="MD" onclick="setFilter('MD')">Maryland</div>
-      <div class="filter-tab" data-filter="VA" onclick="setFilter('VA')">Virginia</div>
-      <div class="filter-tab" data-filter="not_started" onclick="setFilter('not_started')">Not Started</div>
-      <div class="filter-tab" data-filter="emailed" onclick="setFilter('emailed')">Emailed</div>
-      <div class="filter-tab" data-filter="called" onclick="setFilter('called')">Called</div>
+      <div class="stat-card"><div class="stat-num" id="statInstall">0</div><div class="stat-label">Install</div></div>
+      <div class="stat-card"><div class="stat-num" id="statService">0</div><div class="stat-label">Service</div></div>
+      <div class="stat-card"><div class="stat-num" id="statEmailed">0</div><div class="stat-label">Emailed</div></div>
     </div>
 
     <div class="filter-extra">
+      <select class="dash-select" id="typeFilterSelect" onchange="renderDashboard()">
+        <option value="">All Types</option>
+        <option value="install">Install</option>
+        <option value="service">Service</option>
+      </select>
+      <select class="dash-select" id="stateFilterSelect" onchange="renderDashboard()">
+        <option value="">All States</option>
+        <option value="MD">Maryland</option>
+        <option value="VA">Virginia</option>
+      </select>
+      <select class="dash-select" id="milestoneFilterSelect" onchange="renderDashboard()">
+        <option value="">All Milestones</option>
+        <option value="not_started">Not Started</option>
+        <option value="emailed">Emailed</option>
+        <option value="called">Called</option>
+      </select>
       <select class="dash-select" id="cityFilterSelect" onchange="renderDashboard()">
         <option value="">All Cities</option>
       </select>
@@ -568,7 +576,15 @@ async function showApp(){
 // DASHBOARD
 // ══════════════════════════════════════════════════════════
 var customers = [];
-var activeFilter = 'all';
+
+// "1"/"2" tags are installs, "5"/"6" are service customers. Falls back to
+// deriving it from id_prefix for any row synced before customer_type existed.
+function customerType(c){
+  if (c.customer_type) return c.customer_type;
+  if (c.id_prefix==='1' || c.id_prefix==='2') return 'install';
+  if (c.id_prefix==='5' || c.id_prefix==='6') return 'service';
+  return '';
+}
 
 async function showDashboard(){
   document.getElementById('detailView').style.display='none';
@@ -584,12 +600,6 @@ async function loadCustomers(){
   customers = r.data || [];
 }
 function backToDashboard(){ showDashboard(); }
-
-function setFilter(f){
-  activeFilter = f;
-  document.querySelectorAll('.filter-tab').forEach(function(el){ el.classList.toggle('active', el.dataset.filter===f); });
-  renderDashboard();
-}
 
 // City dropdown is rebuilt from whatever's currently loaded — keeps the
 // current selection if it's still a valid city after a resync.
@@ -618,21 +628,27 @@ function sortCustomers(list, sortBy){
 
 function renderDashboard(){
   var q = (document.getElementById('dashSearch').value||'').toLowerCase();
+  var typeFilter = document.getElementById('typeFilterSelect') ? document.getElementById('typeFilterSelect').value : '';
+  var stateFilter = document.getElementById('stateFilterSelect') ? document.getElementById('stateFilterSelect').value : '';
+  var milestoneFilter = document.getElementById('milestoneFilterSelect') ? document.getElementById('milestoneFilterSelect').value : '';
   var cityFilter = document.getElementById('cityFilterSelect') ? document.getElementById('cityFilterSelect').value : '';
   var sortBy = document.getElementById('sortBySelect') ? document.getElementById('sortBySelect').value : 'name_asc';
   document.getElementById('statTotal').textContent = customers.length;
-  document.getElementById('statMd').textContent = customers.filter(function(c){return c.state==='MD';}).length;
-  document.getElementById('statVa').textContent = customers.filter(function(c){return c.state==='VA';}).length;
-  document.getElementById('statCutoff').textContent = customers.filter(function(c){return c.state==='VA' && c.older_than_cutoff;}).length;
+  document.getElementById('statInstall').textContent = customers.filter(function(c){return customerType(c)==='install';}).length;
+  document.getElementById('statService').textContent = customers.filter(function(c){return customerType(c)==='service';}).length;
+  document.getElementById('statEmailed').textContent = customers.filter(function(c){return !!c.milestone_emailed;}).length;
 
+  // All filter dimensions combine (AND) so they can be mixed freely —
+  // e.g. Install + Virginia + Not Started at the same time.
   var list = customers.filter(function(c){
     if (q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(q)) return false;
+    if (typeFilter && customerType(c) !== typeFilter) return false;
+    if (stateFilter && c.state !== stateFilter) return false;
+    if (milestoneFilter === 'not_started' && (c.milestone_emailed || c.milestone_called)) return false;
+    if (milestoneFilter === 'emailed' && !c.milestone_emailed) return false;
+    if (milestoneFilter === 'called' && !c.milestone_called) return false;
     if (cityFilter && canonicalCity(c) !== cityFilter) return false;
-    if (activeFilter==='MD' || activeFilter==='VA') return c.state===activeFilter;
-    if (activeFilter==='not_started') return !c.milestone_emailed && !c.milestone_called;
-    if (activeFilter==='emailed') return !!c.milestone_emailed;
-    if (activeFilter==='called') return !!c.milestone_called;
-    return true; // 'all'
+    return true;
   });
   list = sortCustomers(list, sortBy);
 
@@ -646,8 +662,8 @@ function renderDashboard(){
     return '<div class="customer-tile" onclick="openCustomer(\''+c.id+'\')">'
       + '<div class="tile-top"><div><div class="tile-name">'+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div></div>'
       + '<div class="tile-badges">'
+        + '<span class="pill '+(customerType(c)==='service'?'pill-service':'pill-install')+'">'+esc(customerType(c)==='service'?'Service':'Install')+'</span>'
         + '<span class="pill '+(c.state==='MD'?'pill-md':'pill-va')+'">'+esc(c.state)+'</span>'
-        + (c.older_than_cutoff ? '<span class="pill pill-cutoff">Pre-8/16/22</span>' : '')
         + milestoneBadgesHtml(c)
       + '</div>'
       + '<div class="tile-meta">'+esc(c.address||'No address on file')+'</div>'
@@ -679,7 +695,7 @@ async function syncFromHcp(){
       return {
         hcp_id: c.hcpId, id_prefix: c.idPrefix, id_number: c.idNumber,
         customer_name: c.name, email: c.email, phone: c.phone, address: c.address, city: c.city || null,
-        state: c.state, older_than_cutoff: c.olderThanCutoff, synced_at: new Date().toISOString()
+        state: c.state, customer_type: c.customerType, synced_at: new Date().toISOString()
       };
     });
     // De-dupe by hcp_id before upserting — Postgres rejects an upsert batch
@@ -729,8 +745,8 @@ function renderDetail(){
   document.getElementById('detailName').textContent = currentCustomer.customer_name || 'Unknown';
   document.getElementById('detailSub').textContent = 'HCP ID ' + (currentCustomer.hcp_id||'—');
   document.getElementById('detailBadges').innerHTML =
-    '<span class="pill '+(currentCustomer.state==='MD'?'pill-md':'pill-va')+'">'+esc(currentCustomer.state)+'</span>'
-    + (currentCustomer.older_than_cutoff ? '<span class="pill pill-cutoff">Pre-8/16/22</span>' : '')
+    '<span class="pill '+(customerType(currentCustomer)==='service'?'pill-service':'pill-install')+'">'+esc(customerType(currentCustomer)==='service'?'Service':'Install')+'</span>'
+    + '<span class="pill '+(currentCustomer.state==='MD'?'pill-md':'pill-va')+'">'+esc(currentCustomer.state)+'</span>'
     + milestoneBadgesHtml(currentCustomer);
 
   document.getElementById('fName').value = currentCustomer.customer_name || '';
