@@ -93,6 +93,11 @@ button,input,select,textarea{font-family:inherit;}
   transition:all .15s;display:flex;flex-direction:column;gap:10px;
 }
 .customer-tile:hover{background:var(--glass-hover);border-color:rgba(67,160,71,.35);transform:translateY(-1px);}
+.customer-tile.tile-emailed{background:linear-gradient(135deg,rgba(251,191,36,.16),rgba(251,191,36,.05));border-color:rgba(251,191,36,.5);}
+.customer-tile.tile-emailed:hover{background:linear-gradient(135deg,rgba(251,191,36,.22),rgba(251,191,36,.08));border-color:rgba(251,191,36,.65);}
+.filter-result-count{font-size:12.5px;color:var(--text-dimmer);margin-bottom:.9rem;}
+.pill-toggle{cursor:pointer;}
+.pill-toggle:hover{filter:brightness(1.15);}
 .tile-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
 .tile-name{font-size:16px;font-weight:700;}
 .tile-id{font-size:11.5px;color:var(--text-dimmer);margin-top:2px;}
@@ -291,6 +296,7 @@ button,input,select,textarea{font-family:inherit;}
       </select>
     </div>
 
+    <div class="filter-result-count" id="filterResultCount"></div>
     <div class="customer-grid" id="customerGrid"></div>
   </div>
 
@@ -451,11 +457,13 @@ var MILESTONE_TOGGLES = [
   { field:"milestone_emailed", label:"Emailed" },
   { field:"milestone_called", label:"Called" }
 ];
-function milestoneBadgesHtml(c){
+// tileMode=true (dashboard tiles) makes the Emailed/Called pills clickable
+// to toggle off right from the grid, without opening the customer's page.
+function milestoneBadgesHtml(c, tileMode){
   if (!c.milestone_emailed && !c.milestone_called) return '<span class="pill pill-status">Not Started</span>';
   var out = '';
-  if (c.milestone_emailed) out += '<span class="pill pill-status emailed">Emailed</span>';
-  if (c.milestone_called) out += '<span class="pill pill-status called">Called</span>';
+  if (c.milestone_emailed) out += '<span class="pill pill-status emailed'+(tileMode?' pill-toggle':'')+'"'+(tileMode?' onclick="toggleTileMilestone(\''+c.id+'\',\'milestone_emailed\',event)" title="Click to un-mark as emailed"':'')+'>Emailed</span>';
+  if (c.milestone_called) out += '<span class="pill pill-status called'+(tileMode?' pill-toggle':'')+'"'+(tileMode?' onclick="toggleTileMilestone(\''+c.id+'\',\'milestone_called\',event)" title="Click to un-mark as called"':'')+'>Called</span>';
   return out;
 }
 
@@ -673,6 +681,13 @@ function renderDashboard(){
   });
   list = sortCustomers(list, sortBy);
 
+  var countEl = document.getElementById('filterResultCount');
+  if (countEl) {
+    countEl.textContent = (list.length === customers.length)
+      ? list.length + ' customer' + (list.length===1?'':'s')
+      : 'Showing ' + list.length + ' of ' + customers.length + ' customer' + (customers.length===1?'':'s');
+  }
+
   var grid = document.getElementById('customerGrid');
   if (!list.length) {
     grid.innerHTML = '<div class="dash-empty"><div class="dash-empty-icon">📋</div>' + (customers.length ? 'No customers match this filter.' : 'No customers yet — click "Sync from HCP" to pull in GREC candidates.') + '</div>';
@@ -680,12 +695,12 @@ function renderDashboard(){
   }
   grid.innerHTML = list.map(function(c){
     var docCount = docCountByCustomer[c.id] || 0;
-    return '<div class="customer-tile" onclick="openCustomer(\''+c.id+'\')">'
+    return '<div class="customer-tile'+(c.milestone_emailed?' tile-emailed':'')+'" onclick="openCustomer(\''+c.id+'\')">'
       + '<div class="tile-top"><div><div class="tile-name">'+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div></div>'
       + '<div class="tile-badges">'
         + '<span class="pill '+(customerType(c)==='service'?'pill-service':'pill-install')+'">'+esc(customerType(c)==='service'?'Service':'Install')+'</span>'
         + '<span class="pill '+(c.state==='MD'?'pill-md':'pill-va')+'">'+esc(c.state)+'</span>'
-        + milestoneBadgesHtml(c)
+        + milestoneBadgesHtml(c, true)
       + '</div>'
       + '<div class="tile-meta">'+esc(c.address||'No address on file')+'</div>'
       + '<div class="tile-docs">'+docCount+' document'+(docCount===1?'':'s')+' uploaded</div>'
@@ -808,6 +823,24 @@ async function toggleMilestone(field){
   if (r.error) { showToast('Could not update milestone: ' + r.error.message); return; }
   currentCustomer[field] = newVal;
   renderDetail();
+}
+
+// Same toggle, but from a dashboard tile's pill — stops the click from also
+// opening the customer's page, and updates the local `customers` list (plus
+// currentCustomer if it happens to be the same one) so the golden
+// "emailed" tile styling and any open detail view stay in sync.
+async function toggleTileMilestone(customerId, field, evt){
+  if (evt) { evt.stopPropagation(); }
+  var c = customers.find(function(x){ return x.id===customerId; });
+  if (!c) return;
+  var newVal = !c[field];
+  var updates = { updated_at: new Date().toISOString() };
+  updates[field] = newVal;
+  var r = await sb.from('grec_customers').update(updates).eq('id', customerId);
+  if (r.error) { showToast('Could not update milestone: ' + r.error.message); return; }
+  c[field] = newVal;
+  if (currentCustomer && currentCustomer.id === customerId) currentCustomer[field] = newVal;
+  renderDashboard();
 }
 
 var detailDirty = false;
