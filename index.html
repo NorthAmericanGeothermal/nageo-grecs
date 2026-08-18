@@ -93,20 +93,41 @@ button,input,select,textarea{font-family:inherit;}
   transition:all .15s;display:flex;flex-direction:column;gap:10px;
 }
 .customer-tile:hover{background:var(--glass-hover);border-color:rgba(67,160,71,.35);transform:translateY(-1px);}
-.customer-tile.tile-gold{position:relative;overflow:hidden;background:linear-gradient(135deg,rgba(251,191,36,.18),rgba(251,191,36,.06));border-color:rgba(251,191,36,.55);}
-.customer-tile.tile-gold:hover{background:linear-gradient(135deg,rgba(251,191,36,.24),rgba(251,191,36,.09));border-color:rgba(251,191,36,.7);}
-.customer-tile.tile-gold::after{
-  content:'';position:absolute;top:0;left:-60%;width:45%;height:100%;
-  background:linear-gradient(115deg,transparent 0%,rgba(255,255,255,.55) 45%,rgba(255,236,170,.85) 50%,rgba(255,255,255,.55) 55%,transparent 100%);
-  transform:skewX(-18deg);mix-blend-mode:overlay;pointer-events:none;
-  animation:tileShimmer 3.4s ease-in-out infinite;
+.customer-tile.tile-gold{
+  position:relative;overflow:hidden;
+  background:linear-gradient(135deg,rgba(251,191,36,.3),rgba(180,83,9,.14));
+  border-color:rgba(251,191,36,.8);
+  box-shadow:0 0 0 1px rgba(251,191,36,.3) inset,0 6px 22px rgba(251,191,36,.18);
 }
-@keyframes tileShimmer{0%{left:-60%;}40%{left:130%;}100%{left:130%;}}
+.customer-tile.tile-gold:hover{
+  background:linear-gradient(135deg,rgba(251,191,36,.38),rgba(180,83,9,.2));
+  border-color:rgba(251,191,36,.95);
+}
+.customer-tile.tile-gold::after{
+  content:'';position:absolute;top:0;left:-70%;width:38%;height:100%;
+  background:linear-gradient(100deg,
+    transparent 0%,
+    rgba(255,255,255,.2) 28%,
+    rgba(255,241,196,.95) 47%,
+    #fffdf5 50%,
+    rgba(255,241,196,.95) 53%,
+    rgba(255,255,255,.2) 72%,
+    transparent 100%);
+  transform:skewX(-20deg);
+  mix-blend-mode:screen;
+  pointer-events:none;
+  animation:tileShimmer 2.6s ease-in-out infinite;
+}
+@keyframes tileShimmer{0%{left:-70%;}45%{left:135%;}100%{left:135%;}}
 @media (prefers-reduced-motion:reduce){.customer-tile.tile-gold::after{animation:none;display:none;}}
 .tile-gold-toggle{flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1px solid var(--glass-border);background:var(--glass);color:var(--text-dimmer);cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0;}
 .tile-gold-toggle:hover{background:var(--glass-hover);color:var(--text);}
 .tile-gold-toggle.active{background:rgba(251,191,36,.3);border-color:rgba(251,191,36,.65);color:#fde68a;}
 .filter-result-count{font-size:12.5px;color:var(--text-dimmer);margin-bottom:.9rem;}
+.select-bar{display:flex;align-items:center;gap:12px;background:rgba(96,165,250,.1);border:1px solid rgba(96,165,250,.35);border-radius:12px;padding:10px 14px;margin-bottom:1.2rem;flex-wrap:wrap;}
+.select-bar #selectCount{font-weight:700;font-size:13.5px;color:#93c5fd;}
+.select-bar-hint{font-size:12px;color:var(--text-dimmer);}
+.customer-tile.tile-selected{box-shadow:0 0 0 2px #60a5fa inset;}
 .pill-toggle{cursor:pointer;}
 .pill-toggle:hover{filter:brightness(1.15);}
 .tile-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
@@ -268,7 +289,16 @@ button,input,select,textarea{font-family:inherit;}
         <span class="dash-search-icon">🔍</span>
         <input type="text" id="dashSearch" placeholder="Search by name or ID…" oninput="renderDashboard()">
       </div>
+      <button class="btn" id="selectModeBtn" onclick="toggleSelectMode()">☑ Select for GREC Email</button>
       <button class="btn" id="syncBtn" onclick="syncFromHcp()">⟳ Sync from HCP</button>
+    </div>
+
+    <div class="select-bar" id="selectBar" style="display:none;">
+      <span id="selectCount">0 selected</span>
+      <span class="select-bar-hint">Click customer tiles below to add or remove them.</span>
+      <div class="spacer"></div>
+      <button class="btn btn-sm" onclick="toggleSelectMode()">Cancel</button>
+      <button class="btn btn-accent btn-sm" id="selectSendBtn" onclick="openBatchGrecEmailModal()" disabled>✉ Email GREC</button>
     </div>
 
     <div class="stats-bar">
@@ -636,6 +666,24 @@ async function showApp(){
 // ══════════════════════════════════════════════════════════
 var customers = [];
 
+// ── Batch "Email GREC" selection mode — while active, clicking a tile
+// selects it instead of opening its detail page. ──
+var selectMode = false;
+var selectedCustomerIds = new Set();
+function toggleSelectMode(){
+  selectMode = !selectMode;
+  if (!selectMode) selectedCustomerIds.clear();
+  var btn = document.getElementById('selectModeBtn');
+  if (btn) btn.textContent = selectMode ? '✕ Cancel Selection' : '☑ Select for GREC Email';
+  renderDashboard();
+}
+function toggleTileSelect(customerId, evt){
+  if (evt) { evt.stopPropagation(); }
+  if (selectedCustomerIds.has(customerId)) selectedCustomerIds.delete(customerId);
+  else selectedCustomerIds.add(customerId);
+  renderDashboard();
+}
+
 // "1"/"2" tags are installs, "5"/"6" are service customers. Falls back to
 // deriving it from id_prefix for any row synced before customer_type existed.
 function customerType(c){
@@ -723,6 +771,14 @@ function renderDashboard(){
       : 'Showing ' + list.length + ' of ' + customers.length + ' customer' + (customers.length===1?'':'s');
   }
 
+  var selectBar = document.getElementById('selectBar');
+  if (selectBar) {
+    selectBar.style.display = selectMode ? 'flex' : 'none';
+    document.getElementById('selectCount').textContent = selectedCustomerIds.size + ' selected';
+    var sendBtn = document.getElementById('selectSendBtn');
+    if (sendBtn) sendBtn.disabled = selectedCustomerIds.size === 0;
+  }
+
   var grid = document.getElementById('customerGrid');
   if (!list.length) {
     grid.innerHTML = '<div class="dash-empty"><div class="dash-empty-icon">📋</div>' + (customers.length ? 'No customers match this filter.' : 'No customers yet — click "Sync from HCP" to pull in GREC candidates.') + '</div>';
@@ -731,14 +787,16 @@ function renderDashboard(){
   grid.innerHTML = list.map(function(c){
     var docCount = docCountByCustomer[c.id] || 0;
     var isGold = isGoldCustomer(c);
-    return '<div class="customer-tile'+(isGold?' tile-gold':'')+'" onclick="openCustomer(\''+c.id+'\')">'
-      + '<div class="tile-top"><div><div class="tile-name">'+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div>'
-      + '<button type="button" class="tile-gold-toggle'+(isGold?' active':'')+'" onclick="toggleGoldQuick(\''+c.id+'\',event)" title="'+(isGold?'Mark not fully handled':'Mark fully handled (emailed + GREC notified)')+'">✨</button>'
+    var isSelected = selectMode && selectedCustomerIds.has(c.id);
+    var tileClick = selectMode ? "toggleTileSelect('"+c.id+"',event)" : "openCustomer('"+c.id+"')";
+    return '<div class="customer-tile'+(isGold?' tile-gold':'')+(isSelected?' tile-selected':'')+'" onclick="'+tileClick+'">'
+      + '<div class="tile-top"><div><div class="tile-name">'+(isSelected?'✅ ':'')+esc(c.customer_name||'Unknown')+'</div><div class="tile-id">HCP ID '+esc(c.hcp_id)+'</div></div>'
+      + (selectMode ? '' : '<button type="button" class="tile-gold-toggle'+(isGold?' active':'')+'" onclick="toggleGoldQuick(\''+c.id+'\',event)" title="'+(isGold?'Mark not fully handled':'Mark fully handled (emailed + GREC notified)')+'">✨</button>')
       + '</div>'
       + '<div class="tile-badges">'
         + '<span class="pill '+(customerType(c)==='service'?'pill-service':'pill-install')+'">'+esc(customerType(c)==='service'?'Service':'Install')+'</span>'
         + '<span class="pill '+(c.state==='MD'?'pill-md':'pill-va')+'">'+esc(c.state)+'</span>'
-        + milestoneBadgesHtml(c, true)
+        + milestoneBadgesHtml(c, !selectMode)
       + '</div>'
       + '<div class="tile-meta">'+esc(c.address||'No address on file')+'</div>'
       + '<div class="tile-docs">'+docCount+' document'+(docCount===1?'':'s')+' uploaded</div>'
@@ -1130,6 +1188,35 @@ function buildGrecNotificationHtml(c){
     + '<strong>Phone:</strong> ' + esc(c.phone||'—') + '<br>'
     + '<strong>Email:</strong> ' + esc(c.email||'—') + '</p>';
 }
+// "grec_batch" = one combined notification covering every tile selected on
+// the dashboard via "Select for GREC Email" — see openBatchGrecEmailModal().
+var activeBatchCustomerIds = [];
+function buildGrecBatchHtml(list){
+  var rows = list.map(function(c){
+    return '<div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ddd;">'
+      + '<strong>' + esc(c.customer_name||'Unknown') + '</strong><br>'
+      + 'Address: ' + esc(c.address||'—') + '<br>'
+      + 'Phone: ' + esc(c.phone||'—') + '<br>'
+      + 'Email: ' + esc(c.email||'—')
+      + '</div>';
+  }).join('');
+  return '<p>' + list.length + ' GREC candidate' + (list.length===1?'':'s') + ' ready:</p>' + rows;
+}
+function openBatchGrecEmailModal(){
+  if (!selectedCustomerIds.size) { showToast('Select at least one customer tile first.'); return; }
+  var list = customers.filter(function(c){ return selectedCustomerIds.has(c.id); });
+  activeEmailMode = 'grec_batch';
+  activeBatchCustomerIds = list.map(function(c){ return c.id; });
+  document.getElementById('emailModalTitle').textContent = 'Email GREC — ' + list.length + ' customer' + (list.length===1?'':'s');
+  document.getElementById('emailTo').value = GREC_SETTINGS.grec_contact_email || '';
+  document.getElementById('emailSubject').value = 'GREC Candidates (' + list.length + ')';
+  document.getElementById('emailBodyEditor').innerHTML = buildGrecBatchHtml(list);
+  if (!GREC_SETTINGS.grec_contact_email) showToast('No GREC contact email set yet — add one in ⚙ Email Template → GREC Contact.');
+  populateEmailFromSelect();
+  onEmailFromChange();
+  document.getElementById('emailModal').classList.add('open');
+}
+
 async function openEmailModal(mode){
   if (!currentCustomer) return;
   activeEmailMode = mode || 'customer';
@@ -1161,6 +1248,7 @@ function htmlToPlainForGmail(html){
 }
 
 async function sendEmail(){
+  if (activeEmailMode === 'grec_batch') { await sendBatchGrecEmail(); return; }
   if (!currentCustomer) return;
   var to = document.getElementById('emailTo').value.trim();
   var subject = document.getElementById('emailSubject').value.trim();
@@ -1215,6 +1303,80 @@ async function sendEmail(){
   renderActivity();
   renderDetail();
   showToast(fromEmail ? (isGrecMode ? 'GREC notified.' : 'Email sent.') : 'Opened in Gmail — logged to activity.');
+}
+
+// One email, sent once, covering every customer selected via "Select for
+// GREC Email" on the dashboard — logs its own grec_activity row per
+// customer (so each shows up in that customer's own Activity card) and
+// flips milestone_grec_notified for each one that wasn't already set.
+async function sendBatchGrecEmail(){
+  var to = document.getElementById('emailTo').value.trim();
+  var subject = document.getElementById('emailSubject').value.trim();
+  var bodyHtml = document.getElementById('emailBodyEditor').innerHTML;
+  var fromEmail = document.getElementById('emailFromSelect').value;
+  var ids = activeBatchCustomerIds.slice();
+  if (!to) { showToast('Enter a "To" email address.'); return; }
+  if (!ids.length) { showToast('Nothing selected.'); return; }
+
+  var btn = document.getElementById('emailSendBtn');
+  btn.disabled = true; var origText = btn.textContent; btn.textContent = 'Sending…';
+
+  var gmailThreadId = null, gmailMessageId = null;
+  if (fromEmail) {
+    try {
+      var res = await fetch(GREC_SEND_EMAIL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+        body: JSON.stringify({ action: 'send', google_email: fromEmail, to: to, subject: subject, html_body: bodyHtml })
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) { showToast('Send failed: ' + (data.error || 'unknown error')); btn.disabled=false; btn.textContent=origText; return; }
+      gmailThreadId = data.gmail_thread_id || null;
+      gmailMessageId = data.gmail_message_id || null;
+    } catch (e) {
+      showToast('Send failed — see console.'); console.error(e); btn.disabled=false; btn.textContent=origText; return;
+    }
+  } else {
+    var plainBody = htmlToPlainForGmail(bodyHtml);
+    var gmailUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to)
+      + '&su=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(plainBody);
+    window.open(gmailUrl, '_blank');
+  }
+
+  var rows = ids.map(function(cid){
+    return {
+      customer_id: cid, type: 'email_grec_notified', message: subject || '(no subject)',
+      email_html: bodyHtml, email_to: to, sent_from_email: fromEmail || null, created_by: currentUser.name,
+      gmail_thread_id: gmailThreadId, gmail_message_id: gmailMessageId
+    };
+  });
+  var ins = await sb.from('grec_activity').insert(rows);
+  if (ins.error) { console.warn('[grecs] batch activity log failed', ins.error); }
+
+  var toUpdate = ids.filter(function(cid){
+    var c = customers.find(function(x){ return x.id===cid; });
+    return c && !c.milestone_grec_notified;
+  });
+  if (toUpdate.length) {
+    var mUpd = await sb.from('grec_customers').update({ milestone_grec_notified: true, updated_at: new Date().toISOString() }).in('id', toUpdate);
+    if (!mUpd.error) {
+      toUpdate.forEach(function(cid){
+        var c = customers.find(function(x){ return x.id===cid; });
+        if (c) c.milestone_grec_notified = true;
+      });
+    }
+  }
+
+  btn.disabled = false; btn.textContent = origText;
+  closeEmailModal();
+  selectedCustomerIds.clear();
+  selectMode = false;
+  var selBtn = document.getElementById('selectModeBtn');
+  if (selBtn) selBtn.textContent = '☑ Select for GREC Email';
+  renderDashboard();
+  showToast(fromEmail
+    ? ('GREC notified about ' + ids.length + ' customer' + (ids.length===1?'':'s') + '.')
+    : 'Opened in Gmail — logged to each selected customer\'s activity.');
 }
 
 // ══════════════════════════════════════════════════════════
