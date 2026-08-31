@@ -332,8 +332,8 @@ button,input,select,textarea{font-family:inherit;}
         <option value="">All Cities</option>
       </select>
       <select class="dash-select" id="sortBySelect" onchange="renderDashboard()">
-        <option value="name_asc">Sort: Name (A–Z)</option>
-        <option value="name_desc">Sort: Name (Z–A)</option>
+        <option value="name_asc">Sort: Last Name (A–Z)</option>
+        <option value="name_desc">Sort: Last Name (Z–A)</option>
         <option value="id_asc">Sort: ID Number (Low–High)</option>
         <option value="id_desc">Sort: ID Number (High–Low)</option>
         <option value="city_asc">Sort: City (A–Z)</option>
@@ -724,15 +724,26 @@ function populateCityFilter(){
   if (cities.indexOf(current) !== -1) sel.value = current;
 }
 
+// "Sort: Name" sorts by LAST name, not first. Prefers the last_name column
+// (populated by the sync going forward, from HCP's own first_name/last_name
+// fields); falls back to guessing the last word of customer_name for older
+// rows that haven't been re-synced since last_name was added, or for
+// company-only customers with no first/last split at all.
+function sortableLastName(c){
+  if (c.last_name) return c.last_name;
+  var name = (c.customer_name || '').trim();
+  var parts = name.split(/\s+/);
+  return parts.length ? parts[parts.length - 1] : name;
+}
 function sortCustomers(list, sortBy){
   var arr = list.slice();
   switch (sortBy) {
-    case 'name_desc': arr.sort(function(a,b){ return (b.customer_name||'').localeCompare(a.customer_name||''); }); break;
+    case 'name_desc': arr.sort(function(a,b){ return sortableLastName(b).localeCompare(sortableLastName(a)); }); break;
     case 'id_asc': arr.sort(function(a,b){ return (a.id_number||0)-(b.id_number||0); }); break;
     case 'id_desc': arr.sort(function(a,b){ return (b.id_number||0)-(a.id_number||0); }); break;
     case 'city_asc': arr.sort(function(a,b){ return canonicalCity(a).localeCompare(canonicalCity(b)); }); break;
     case 'recent': arr.sort(function(a,b){ return new Date(b.synced_at||0) - new Date(a.synced_at||0); }); break;
-    case 'name_asc': default: arr.sort(function(a,b){ return (a.customer_name||'').localeCompare(b.customer_name||''); }); break;
+    case 'name_asc': default: arr.sort(function(a,b){ return sortableLastName(a).localeCompare(sortableLastName(b)); }); break;
   }
   return arr;
 }
@@ -930,7 +941,8 @@ async function syncFromHcp(){
     var rows = (data.customers||[]).map(function(c){
       return {
         hcp_id: c.hcpId, id_prefix: c.idPrefix, id_number: c.idNumber,
-        customer_name: c.name, email: c.email, phone: c.phone, address: c.address, city: c.city || null,
+        customer_name: c.name, first_name: c.firstName || null, last_name: c.lastName || null,
+        email: c.email, phone: c.phone, address: c.address, city: c.city || null,
         state: c.state, customer_type: c.customerType, synced_at: new Date().toISOString()
       };
     });
