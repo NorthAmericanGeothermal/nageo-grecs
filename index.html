@@ -290,6 +290,7 @@ button,input,select,textarea{font-family:inherit;}
         <input type="text" id="dashSearch" placeholder="Search by name or ID…" oninput="renderDashboard()">
       </div>
       <button class="btn" id="selectModeBtn" onclick="toggleSelectMode()">☑ Select for GREC Email</button>
+      <button class="btn" id="printListBtn" onclick="printCustomerList()" title="Print the customers currently shown — respects whatever filters/search/sort are active">🖨 Print List</button>
       <button class="btn" id="syncBtn" onclick="syncFromHcp()">⟳ Sync from HCP</button>
     </div>
 
@@ -736,33 +737,136 @@ function sortCustomers(list, sortBy){
   return arr;
 }
 
+// Reads the current state of every filter/sort control on the dashboard.
+// Single source of truth for "what's active right now" — used by
+// renderDashboard AND the Print List feature, so what you print always
+// matches exactly what's on screen.
+function getActiveFilters(){
+  return {
+    q: (document.getElementById('dashSearch').value||'').toLowerCase(),
+    typeFilter: document.getElementById('typeFilterSelect') ? document.getElementById('typeFilterSelect').value : '',
+    stateFilter: document.getElementById('stateFilterSelect') ? document.getElementById('stateFilterSelect').value : '',
+    milestoneFilter: document.getElementById('milestoneFilterSelect') ? document.getElementById('milestoneFilterSelect').value : '',
+    cityFilter: document.getElementById('cityFilterSelect') ? document.getElementById('cityFilterSelect').value : '',
+    sortBy: document.getElementById('sortBySelect') ? document.getElementById('sortBySelect').value : 'name_asc',
+  };
+}
+// Applies a filters object (from getActiveFilters) to the full customer
+// list and returns the filtered + sorted result. All filter dimensions
+// combine (AND) so they can be mixed freely — e.g. Install + Virginia +
+// Not Started at the same time.
+function getFilteredCustomerList(filters){
+  var list = customers.filter(function(c){
+    if (filters.q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(filters.q)) return false;
+    if (filters.typeFilter && customerType(c) !== filters.typeFilter) return false;
+    if (filters.stateFilter && c.state !== filters.stateFilter) return false;
+    if (filters.milestoneFilter === 'not_started' && (c.milestone_emailed || c.milestone_called || c.milestone_grec_notified)) return false;
+    if (filters.milestoneFilter === 'emailed' && !c.milestone_emailed) return false;
+    if (filters.milestoneFilter === 'grec_notified' && !c.milestone_grec_notified) return false;
+    if (filters.milestoneFilter === 'called' && !c.milestone_called) return false;
+    if (filters.milestoneFilter === 'gold' && !isGoldCustomer(c)) return false;
+    if (filters.cityFilter && canonicalCity(c) !== filters.cityFilter) return false;
+    return true;
+  });
+  return sortCustomers(list, filters.sortBy);
+}
+// Turns an active-filters object into a short human-readable summary, e.g.
+// "Install · Virginia · Search: "smith"" — shown at the top of the printed
+// list so it's clear at a glance what's included. Empty string if nothing's
+// filtered (i.e. printing the full list).
+function describeActiveFilters(filters){
+  var typeLabels = { install: 'Install', service: 'Service' };
+  var stateLabels = { MD: 'Maryland', VA: 'Virginia' };
+  var milestoneLabels = { not_started: 'Not Started', emailed: 'Emailed', grec_notified: 'GREC Notified', called: 'Called', gold: 'Fully Handled (gold)' };
+  var bits = [];
+  if (filters.typeFilter) bits.push(typeLabels[filters.typeFilter] || filters.typeFilter);
+  if (filters.stateFilter) bits.push(stateLabels[filters.stateFilter] || filters.stateFilter);
+  if (filters.milestoneFilter) bits.push(milestoneLabels[filters.milestoneFilter] || filters.milestoneFilter);
+  if (filters.cityFilter) bits.push(filters.cityFilter);
+  if (filters.q) bits.push('Search: "' + filters.q + '"');
+  return bits.join(' · ');
+}
+
+// "🖨 Print List" — opens a clean, spreadsheet-style table of exactly the
+// customers currently on screen (same filters/search/sort as the dashboard,
+// via getActiveFilters/getFilteredCustomerList) in a new tab, then triggers
+// the browser's print dialog. Built as its own standalone HTML document
+// (not the dashboard's own styling) so it prints cleanly — landscape, plain
+// borders, no dark theme, no UI chrome.
+function printCustomerList(){
+  var filters = getActiveFilters();
+  var list = getFilteredCustomerList(filters);
+  if (!list.length) { showToast('No customers match the current filters — nothing to print.'); return; }
+
+  var filterDesc = describeActiveFilters(filters);
+  // Core profile info only — no milestone columns (Emailed/Called/GREC
+  // Notified) for now. Easy to add back later if wanted.
+  var cols = ['ID Tag', 'Name', 'Type', 'Address', 'City', 'State', 'Phone', 'Email'];
+  var rows = list.map(function(c){
+    return [
+      c.hcp_id || '',
+      c.customer_name || '',
+      customerType(c) === 'service' ? 'Service' : 'Install',
+      c.address || '',
+      c.city || '',
+      c.state || '',
+      c.phone || '',
+      c.email || '',
+    ];
+  });
+
+  var theadHtml = '<tr>' + cols.map(function(h){ return '<th>' + escHtml(h) + '</th>'; }).join('') + '</tr>';
+  var tbodyHtml = rows.map(function(r){
+    return '<tr>' + r.map(function(v){ return '<td>' + escHtml(String(v)) + '</td>'; }).join('') + '</tr>';
+  }).join('');
+
+  var generatedAt = new Date().toLocaleString();
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>GREC Customers</title><style>'
+    + '@page { size: landscape; margin: 0.5in; }'
+    + 'body{font-family:-apple-system,Helvetica,Arial,sans-serif;color:#111;margin:0;padding:24px;}'
+    + 'h1{font-size:18px;margin:0 0 4px;}'
+    + '.meta{font-size:12px;color:#555;margin-bottom:2px;}'
+    + '.filters{font-size:12px;color:#333;margin-bottom:14px;font-weight:600;}'
+    + 'table{width:100%;border-collapse:collapse;font-size:11.5px;}'
+    + 'th,td{border:1px solid #999;padding:5px 7px;text-align:left;vertical-align:top;}'
+    + 'th{background:#e8e8e8;font-weight:700;}'
+    + 'tr:nth-child(even) td{background:#f7f7f7;}'
+    + '@media print{ tr:nth-child(even) td{ -webkit-print-color-adjust:exact; print-color-adjust:exact; } th{ -webkit-print-color-adjust:exact; print-color-adjust:exact; } }'
+    + '</style></head><body>'
+    + '<h1>GREC Customers</h1>'
+    + '<div class="meta">Generated ' + escHtml(generatedAt) + ' · ' + list.length + ' customer' + (list.length===1?'':'s') + '</div>'
+    + (filterDesc ? '<div class="filters">Filtered by: ' + escHtml(filterDesc) + '</div>' : '<div class="filters">All customers (no filters active)</div>')
+    + '<table><thead>' + theadHtml + '</thead><tbody>' + tbodyHtml + '</tbody></table>'
+    + '</body></html>';
+
+  var printWin = window.open('', '_blank');
+  if (!printWin) { showToast('Your browser blocked the print window — allow pop-ups for this site and try again.'); return; }
+  printWin.document.open();
+  printWin.document.write(html);
+  printWin.document.close();
+  // Give the new document a moment to finish laying out the table before
+  // invoking print — calling it immediately can open the dialog on a blank
+  // page in some browsers.
+  var printed = false;
+  function doPrint(){ if (printed || printWin.closed) return; printed = true; printWin.focus(); printWin.print(); }
+  printWin.onload = doPrint;
+  setTimeout(doPrint, 400); // fallback in case onload doesn't fire for a document.write()'d window
+}
+// Minimal HTML-escaper for the print window (kept separate from the app's
+// own esc() in case that one changes shape later — this one only ever needs
+// to handle plain strings).
+function escHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function renderDashboard(){
-  var q = (document.getElementById('dashSearch').value||'').toLowerCase();
-  var typeFilter = document.getElementById('typeFilterSelect') ? document.getElementById('typeFilterSelect').value : '';
-  var stateFilter = document.getElementById('stateFilterSelect') ? document.getElementById('stateFilterSelect').value : '';
-  var milestoneFilter = document.getElementById('milestoneFilterSelect') ? document.getElementById('milestoneFilterSelect').value : '';
-  var cityFilter = document.getElementById('cityFilterSelect') ? document.getElementById('cityFilterSelect').value : '';
-  var sortBy = document.getElementById('sortBySelect') ? document.getElementById('sortBySelect').value : 'name_asc';
+  var filters = getActiveFilters();
   document.getElementById('statTotal').textContent = customers.length;
   document.getElementById('statInstall').textContent = customers.filter(function(c){return customerType(c)==='install';}).length;
   document.getElementById('statService').textContent = customers.filter(function(c){return customerType(c)==='service';}).length;
   document.getElementById('statEmailed').textContent = customers.filter(function(c){return !!c.milestone_emailed;}).length;
 
-  // All filter dimensions combine (AND) so they can be mixed freely —
-  // e.g. Install + Virginia + Not Started at the same time.
-  var list = customers.filter(function(c){
-    if (q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(q)) return false;
-    if (typeFilter && customerType(c) !== typeFilter) return false;
-    if (stateFilter && c.state !== stateFilter) return false;
-    if (milestoneFilter === 'not_started' && (c.milestone_emailed || c.milestone_called || c.milestone_grec_notified)) return false;
-    if (milestoneFilter === 'emailed' && !c.milestone_emailed) return false;
-    if (milestoneFilter === 'grec_notified' && !c.milestone_grec_notified) return false;
-    if (milestoneFilter === 'called' && !c.milestone_called) return false;
-    if (milestoneFilter === 'gold' && !isGoldCustomer(c)) return false;
-    if (cityFilter && canonicalCity(c) !== cityFilter) return false;
-    return true;
-  });
-  list = sortCustomers(list, sortBy);
+  var list = getFilteredCustomerList(filters);
 
   var countEl = document.getElementById('filterResultCount');
   if (countEl) {
@@ -841,7 +945,31 @@ async function syncFromHcp(){
     if (!rows.length) { showToast('No GREC candidates found — check the sync function is deployed and tags are set on HCP.'); return; }
     var up = await sb.from('grec_customers').upsert(rows, { onConflict: 'hcp_id' });
     if (up.error) { showToast('Could not save synced customers: ' + up.error.message); return; }
-    showToast('Synced ' + rows.length + ' candidate' + (rows.length===1?'':'s') + ' from HCP.' + (dupeCount>0 ? ' (' + dupeCount + ' duplicate tag' + (dupeCount===1?'':'s') + ' skipped.)' : ''));
+
+    // Remove any already-synced customer the Edge Function flagged as now
+    // tagged Prospect/Cold Lead — this is the ONLY case that deletes a row:
+    // a customer this account already has a matching ID tag + MD/VA address
+    // for, specifically excluded for that tag. Customers that just didn't
+    // come back in this sync for some other reason (pagination hiccup, tag
+    // removed, address changed) are left untouched, same as before. Note:
+    // this also removes that customer's uploaded GREC documents and email
+    // activity history (grec_documents/grec_activity cascade-delete with
+    // the customer row) — expected, since Prospect/Cold Lead customers
+    // shouldn't have meaningful GREC history yet.
+    var removedCount = 0;
+    var excludedIds = data.excluded || [];
+    if (excludedIds.length) {
+      var del = await sb.from('grec_customers').delete().in('hcp_id', excludedIds);
+      if (del.error) {
+        showToast('Synced, but could not remove Prospect/Cold Lead customers: ' + del.error.message);
+      } else {
+        removedCount = excludedIds.length;
+      }
+    }
+
+    showToast('Synced ' + rows.length + ' candidate' + (rows.length===1?'':'s') + ' from HCP.'
+      + (dupeCount>0 ? ' (' + dupeCount + ' duplicate tag' + (dupeCount===1?'':'s') + ' skipped.)' : '')
+      + (removedCount>0 ? ' Removed ' + removedCount + ' customer' + (removedCount===1?'':'s') + ' now tagged Prospect/Cold Lead.' : ''));
     await showDashboard();
   } catch (e) {
     console.error(e);
