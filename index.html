@@ -413,7 +413,7 @@ button,input,select,textarea{font-family:inherit;}
         <button type="button" onclick="rteCmd('emailBodyEditor','insertOrderedList')" title="Numbered list">1≡</button>
         <button type="button" onclick="rteCmd('emailBodyEditor','removeFormat')" title="Clear formatting">Tx</button>
       </div>
-      <div class="rte-editor" contenteditable="true" id="emailBodyEditor"></div>
+      <div class="rte-editor" contenteditable="true" id="emailBodyEditor" onpaste="handleEditorPaste(event)"></div>
     </div>
     <div class="modal-warn" id="emailSendNote">Checking your Gmail connection…</div>
     <div class="modal-btns">
@@ -455,7 +455,7 @@ button,input,select,textarea{font-family:inherit;}
         <button type="button" onclick="rteCmd('settingsBodyEditor','insertOrderedList')" title="Numbered list">1≡</button>
         <button type="button" onclick="rteCmd('settingsBodyEditor','removeFormat')" title="Clear formatting">Tx</button>
       </div>
-      <div class="rte-editor" contenteditable="true" id="settingsBodyEditor"></div>
+      <div class="rte-editor" contenteditable="true" id="settingsBodyEditor" onpaste="handleEditorPaste(event)"></div>
     </div>
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeSettingsModal()">Close</button>
@@ -1282,6 +1282,20 @@ async function saveSettings(){
 function rteCmd(targetId, cmd){
   document.getElementById(targetId).focus();
   document.execCommand(cmd, false, null);
+}
+// Forces every paste into a template/compose box to plain text. Without
+// this, pasting content copied from another email/Gmail/Word carries its
+// source formatting along — margins, borders, font — into the saved HTML.
+// That's exactly what made a pasted template show up looking like a quoted/
+// forwarded message once actually sent: the pasted markup (e.g. a
+// blockquote-style wrapper) rides along in email_body_html and Gmail
+// renders it with that indent/border styling on the recipient's end. Typed
+// text and the toolbar's Bold/Italic/lists still work fine — this only
+// strips formatting that arrives via paste.
+function handleEditorPaste(e){
+  e.preventDefault();
+  var text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  document.execCommand('insertText', false, text);
 }
 
 // {{name}} merge — mergeText for plain fields (subject), mergeHtml for the
