@@ -1438,9 +1438,10 @@ var activeEmailMode = 'customer';
 function buildGrecNotificationHtml(c){
   return '<p>New GREC candidate ready:</p>'
     + '<p><strong>Name:</strong> ' + esc(c.customer_name||'—') + '<br>'
+    + '<strong>Email:</strong> ' + esc(c.email||'—') + '<br>'
     + '<strong>Address:</strong> ' + esc(c.address||'—') + '<br>'
     + '<strong>Phone:</strong> ' + esc(c.phone||'—') + '<br>'
-    + '<strong>Email:</strong> ' + esc(c.email||'—') + '</p>';
+    + '<strong>ID Number:</strong> ' + esc(c.hcp_id||'—') + '</p>';
 }
 // "grec_batch" = one combined notification covering every tile selected on
 // the dashboard via "Select for GREC Email" — see openBatchGrecEmailModal().
@@ -1449,9 +1450,10 @@ function buildGrecBatchHtml(list){
   var rows = list.map(function(c){
     return '<div style="margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #ddd;">'
       + '<strong>' + esc(c.customer_name||'Unknown') + '</strong><br>'
+      + 'Email: ' + esc(c.email||'—') + '<br>'
       + 'Address: ' + esc(c.address||'—') + '<br>'
       + 'Phone: ' + esc(c.phone||'—') + '<br>'
-      + 'Email: ' + esc(c.email||'—')
+      + 'ID Number: ' + esc(c.hcp_id||'—')
       + '</div>';
   }).join('');
   return '<p>' + list.length + ' GREC candidate' + (list.length===1?'':'s') + ' ready:</p>' + rows;
