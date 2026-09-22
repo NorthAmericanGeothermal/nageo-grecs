@@ -290,7 +290,7 @@ button,input,select,textarea{font-family:inherit;}
         <span class="dash-search-icon">🔍</span>
         <input type="text" id="dashSearch" placeholder="Search by name or ID…" oninput="renderDashboard()">
       </div>
-      <button class="btn" id="selectModeBtn" onclick="toggleSelectMode()">☑ Select for GREC Email</button>
+      <button class="btn" id="selectModeBtn" onclick="toggleSelectMode()">☑ Select Customers</button>
       <button class="btn" id="printListBtn" onclick="printCustomerList()" title="Print the customers currently shown — respects whatever filters/search/sort are active">🖨 Print List</button>
       <button class="btn" id="syncBtn" onclick="syncFromHcp()">⟳ Sync from HCP</button>
     </div>
@@ -300,6 +300,7 @@ button,input,select,textarea{font-family:inherit;}
       <span class="select-bar-hint">Click customer tiles below to add or remove them.</span>
       <div class="spacer"></div>
       <button class="btn btn-sm" onclick="toggleSelectMode()">Cancel</button>
+      <button class="btn btn-accent btn-sm" id="selectBulkEmailBtn" onclick="openBulkCustomerEmailModal()" disabled>✉ Email Customers (Bulk)</button>
       <button class="btn btn-accent btn-sm" id="selectSendBtn" onclick="openBatchGrecEmailModal()" disabled>✉ Email GREC</button>
     </div>
 
@@ -419,6 +420,42 @@ button,input,select,textarea{font-family:inherit;}
     <div class="modal-btns">
       <button class="modal-cancel" onclick="closeEmailModal()">Cancel</button>
       <button class="modal-go" id="emailSendBtn" onclick="sendEmail()" style="background:var(--green);">Send Email</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="bulkEmailModal">
+  <div class="modal" style="width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-title" id="bulkEmailModalTitle">Email Customers</div>
+    <div class="merge-hint">Each customer selected gets their own email — <code>{{name}}</code> becomes their first name and <code>{{from_name}}</code> becomes the sign-off for whoever you send as. Starts from your Default Email Template; editing it here only affects this batch, not the saved template.</div>
+    <div class="modal-row">
+      <div class="modal-label">Sending as</div>
+      <select class="modal-select" id="bulkEmailFromSelect" onchange="onBulkEmailFromChange()"></select>
+    </div>
+    <div class="modal-row">
+      <div class="modal-label">Subject</div>
+      <input type="text" class="modal-input" id="bulkEmailSubject">
+    </div>
+    <div class="modal-row">
+      <div class="modal-label">Message</div>
+      <div class="rte-toolbar">
+        <button type="button" onclick="rteCmd('bulkEmailBodyEditor','bold')" title="Bold"><b>B</b></button>
+        <button type="button" onclick="rteCmd('bulkEmailBodyEditor','italic')" title="Italic"><i>I</i></button>
+        <button type="button" onclick="rteCmd('bulkEmailBodyEditor','insertUnorderedList')" title="Bullet list">•≡</button>
+        <button type="button" onclick="rteCmd('bulkEmailBodyEditor','insertOrderedList')" title="Numbered list">1≡</button>
+        <button type="button" onclick="rteCmd('bulkEmailBodyEditor','removeFormat')" title="Clear formatting">Tx</button>
+      </div>
+      <div class="rte-editor" contenteditable="true" id="bulkEmailBodyEditor" onpaste="handleEditorPaste(event)"></div>
+    </div>
+    <div class="modal-row">
+      <div class="modal-label">Recipients (<span id="bulkEmailRecipientCount">0</span>)</div>
+      <div class="doc-list" id="bulkEmailRecipientList" style="max-height:200px;overflow-y:auto;"></div>
+    </div>
+    <div class="modal-warn" id="bulkEmailSendNote"></div>
+    <div class="modal-warn" id="bulkEmailProgress" style="display:none;"></div>
+    <div class="modal-btns">
+      <button class="modal-cancel" onclick="closeBulkEmailModal()">Cancel</button>
+      <button class="modal-go" id="bulkEmailSendBtn" onclick="sendBulkCustomerEmails()" style="background:var(--green);">Send</button>
     </div>
   </div>
 </div>
@@ -676,7 +713,7 @@ function toggleSelectMode(){
   selectMode = !selectMode;
   if (!selectMode) selectedCustomerIds.clear();
   var btn = document.getElementById('selectModeBtn');
-  if (btn) btn.textContent = selectMode ? '✕ Cancel Selection' : '☑ Select for GREC Email';
+  if (btn) btn.textContent = selectMode ? '✕ Cancel Selection' : '☑ Select Customers';
   renderDashboard();
 }
 function toggleTileSelect(customerId, evt){
@@ -894,6 +931,8 @@ function renderDashboard(){
     document.getElementById('selectCount').textContent = selectedCustomerIds.size + ' selected';
     var sendBtn = document.getElementById('selectSendBtn');
     if (sendBtn) sendBtn.disabled = selectedCustomerIds.size === 0;
+    var bulkBtn = document.getElementById('selectBulkEmailBtn');
+    if (bulkBtn) bulkBtn.disabled = selectedCustomerIds.size === 0;
   }
 
   var grid = document.getElementById('customerGrid');
@@ -1432,6 +1471,135 @@ function openBatchGrecEmailModal(){
   document.getElementById('emailModal').classList.add('open');
 }
 
+// ══════════════════════════════════════════════════════════
+// BULK EMAIL CUSTOMERS — unlike "Email GREC" above (one combined email to
+// the GREC contact), this sends each selected customer their OWN email,
+// individually personalized: {{name}} -> that customer's first name,
+// {{from_name}} -> the sign-off for whichever account is sending. Starts
+// from the saved Default Email Template (editable here for just this
+// batch — doesn't touch the saved template). Sent one at a time, in order,
+// so one bad address or a slow reply from Gmail can't take the rest down
+// with it — each customer's own outcome (sent/failed) is tracked
+// separately and logged to their own activity feed, same as a normal
+// single "Send Email".
+// ══════════════════════════════════════════════════════════
+var activeBulkCustomerList = [];
+function openBulkCustomerEmailModal(){
+  if (!selectedCustomerIds.size) { showToast('Select at least one customer tile first.'); return; }
+  activeBulkCustomerList = customers.filter(function(c){ return selectedCustomerIds.has(c.id); });
+  document.getElementById('bulkEmailModalTitle').textContent = 'Email Customers — ' + activeBulkCustomerList.length + ' selected';
+  document.getElementById('bulkEmailSubject').value = GREC_SETTINGS.email_subject || '';
+  document.getElementById('bulkEmailBodyEditor').innerHTML = GREC_SETTINGS.email_body_html || '';
+  document.getElementById('bulkEmailProgress').style.display = 'none';
+  populateBulkEmailFromSelect();
+  renderBulkEmailRecipients();
+  document.getElementById('bulkEmailModal').classList.add('open');
+}
+function closeBulkEmailModal(){ document.getElementById('bulkEmailModal').classList.remove('open'); }
+
+function populateBulkEmailFromSelect(){
+  var sel = document.getElementById('bulkEmailFromSelect');
+  var btn = document.getElementById('bulkEmailSendBtn');
+  var note = document.getElementById('bulkEmailSendNote');
+  if (!gmailPool.length) {
+    sel.innerHTML = '<option value="">No Gmail account connected</option>';
+    note.textContent = 'Connect a Gmail account in ⚙ Email Template → Gmail Accounts before sending in bulk — there\'s no "open in Gmail manually" option here since this sends many emails at once.';
+    btn.disabled = true;
+    return;
+  }
+  sel.innerHTML = gmailPool.map(function(a){ return '<option value="'+esc(a.google_email)+'">'+esc(a.google_email)+'</option>'; }).join('');
+  var preferred = (currentUser && currentUser.default_gmail_email && gmailPool.some(function(a){return a.google_email===currentUser.default_gmail_email;}))
+    ? currentUser.default_gmail_email
+    : gmailPool[0].google_email;
+  sel.value = preferred;
+  onBulkEmailFromChange();
+  btn.disabled = false;
+}
+function onBulkEmailFromChange(){
+  var val = document.getElementById('bulkEmailFromSelect').value;
+  var fromName = resolveFromName(val);
+  document.getElementById('bulkEmailSendNote').textContent = val
+    ? ('Each email is sent individually through ' + val + ', signed off as "' + fromName + '".')
+    : '';
+}
+function renderBulkEmailRecipients(){
+  var list = activeBulkCustomerList || [];
+  var withEmail = list.filter(function(c){ return !!(c.email && c.email.trim()); });
+  var withoutEmail = list.length - withEmail.length;
+  document.getElementById('bulkEmailRecipientCount').textContent = withEmail.length + (withoutEmail ? ' — ' + withoutEmail + ' skipped, no email on file' : '');
+  document.getElementById('bulkEmailRecipientList').innerHTML = list.map(function(c){
+    var hasEmail = !!(c.email && c.email.trim());
+    return '<div class="doc-row"><div class="doc-info">'
+      + '<div class="gmail-row-email">'+esc(c.customer_name||'Unknown')+'</div>'
+      + '<div class="gmail-row-sub">'+(hasEmail ? esc(c.email) : '⚠ No email on file — will be skipped')+'</div>'
+      + '</div></div>';
+  }).join('');
+}
+function sleepMs(ms){ return new Promise(function(resolve){ setTimeout(resolve, ms); }); }
+async function sendBulkCustomerEmails(){
+  var list = (activeBulkCustomerList || []).filter(function(c){ return !!(c.email && c.email.trim()); });
+  if (!list.length) { showToast('None of the selected customers have an email on file.'); return; }
+  var fromEmail = document.getElementById('bulkEmailFromSelect').value;
+  if (!fromEmail) { showToast('Pick a Gmail account to send from.'); return; }
+  var subjectTemplate = document.getElementById('bulkEmailSubject').value.trim();
+  var bodyTemplate = document.getElementById('bulkEmailBodyEditor').innerHTML;
+  var fromName = resolveFromName(fromEmail);
+
+  if (!confirm('Send a personalized email to ' + list.length + ' customer' + (list.length===1?'':'s') + ' now, individually? This sends real emails right away and can\'t be bulk-undone.')) return;
+
+  var btn = document.getElementById('bulkEmailSendBtn');
+  btn.disabled = true;
+  var progressEl = document.getElementById('bulkEmailProgress');
+  progressEl.style.display = 'block';
+
+  var succeeded = 0, failed = [];
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i];
+    progressEl.textContent = 'Sending ' + (i + 1) + ' of ' + list.length + ': ' + (c.customer_name || 'Unknown') + '…';
+    var subject = mergeText(subjectTemplate, c).replace(/\{\{\s*from_name\s*\}\}/gi, fromName);
+    var bodyHtml = mergeHtml(bodyTemplate, c).replace(/\{\{\s*from_name\s*\}\}/gi, esc(fromName));
+    try {
+      var res = await fetch(GREC_SEND_EMAIL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+        body: JSON.stringify({ action: 'send', google_email: fromEmail, to: c.email, subject: subject, html_body: bodyHtml })
+      });
+      var data = await res.json();
+      if (!res.ok || data.error) { failed.push({ name: c.customer_name || c.email, error: data.error || ('HTTP ' + res.status) }); continue; }
+
+      var activityRow = {
+        customer_id: c.id, type: 'email_sent', message: subject || '(no subject)',
+        email_html: bodyHtml, email_to: c.email, sent_from_email: fromEmail, created_by: currentUser.name,
+        gmail_thread_id: data.gmail_thread_id || null, gmail_message_id: data.gmail_message_id || null
+      };
+      var ins = await sb.from('grec_activity').insert(activityRow);
+      if (ins.error) console.warn('[grecs] bulk activity log failed for', c.customer_name, ins.error);
+
+      if (!c.milestone_emailed) {
+        var mUpd = await sb.from('grec_customers').update({ milestone_emailed: true, updated_at: new Date().toISOString() }).eq('id', c.id);
+        if (!mUpd.error) c.milestone_emailed = true;
+      }
+      succeeded++;
+    } catch (e) {
+      failed.push({ name: c.customer_name || c.email, error: String(e.message || e) });
+    }
+    await sleepMs(200); // light stagger — same reasoning as the Unit Count Tagger's batch apply, avoids bursting Gmail's send rate limit
+  }
+
+  progressEl.style.display = 'none';
+  btn.disabled = false;
+  closeBulkEmailModal();
+  toggleSelectMode(); // exits select mode, clears selection, re-renders the dashboard (tiles now reflect milestone_emailed)
+
+  if (failed.length) {
+    showToast(succeeded + ' sent, ' + failed.length + ' failed — ' +
+      failed.slice(0, 5).map(function (f) { return esc(f.name) + ': ' + esc(f.error); }).join('; ') +
+      (failed.length > 5 ? '…' : ''));
+  } else {
+    showToast('✅ Sent to ' + succeeded + ' customer' + (succeeded === 1 ? '' : 's') + '.');
+  }
+}
+
 async function openEmailModal(mode){
   if (!currentCustomer) return;
   activeEmailMode = mode || 'customer';
@@ -1596,7 +1764,7 @@ async function sendBatchGrecEmail(){
   selectedCustomerIds.clear();
   selectMode = false;
   var selBtn = document.getElementById('selectModeBtn');
-  if (selBtn) selBtn.textContent = '☑ Select for GREC Email';
+  if (selBtn) selBtn.textContent = '☑ Select Customers';
   renderDashboard();
   showToast(fromEmail
     ? ('GREC notified about ' + ids.length + ' customer' + (ids.length===1?'':'s') + '.')
