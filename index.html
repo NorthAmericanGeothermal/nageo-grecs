@@ -1300,8 +1300,19 @@ function handleEditorPaste(e){
 
 // {{name}} merge — mergeText for plain fields (subject), mergeHtml for the
 // rich-text body (escapes the name so it can't break the surrounding HTML).
-function mergeText(str, customer){ return String(str||'').replace(/\{\{\s*name\s*\}\}/gi, (customer && customer.customer_name) || 'there'); }
-function mergeHtml(str, customer){ return String(str||'').replace(/\{\{\s*name\s*\}\}/gi, esc((customer && customer.customer_name) || 'there')); }
+// {{name}} now merges the FIRST name only — a lot of HCP records have the
+// last name stored in all caps, which looked wrong in a sent email. Prefers
+// the first_name column (populated straight from HCP's own field on sync);
+// falls back to just the first word of customer_name for any row that
+// hasn't been re-synced since first_name/last_name were added.
+function customerFirstName(customer){
+  if (!customer) return 'there';
+  if (customer.first_name) return customer.first_name;
+  var name = (customer.customer_name || '').trim();
+  return name ? name.split(/\s+/)[0] : 'there';
+}
+function mergeText(str, customer){ return String(str||'').replace(/\{\{\s*name\s*\}\}/gi, customerFirstName(customer)); }
+function mergeHtml(str, customer){ return String(str||'').replace(/\{\{\s*name\s*\}\}/gi, esc(customerFirstName(customer))); }
 
 // ══════════════════════════════════════════════════════════
 // SEND EMAIL
