@@ -441,7 +441,7 @@ button,input,select,textarea{font-family:inherit;}
     </div>
 
     <div class="modal-title">Default Email Template</div>
-    <div class="merge-hint">Use <code>{{name}}</code> anywhere below and it'll be swapped for the customer's name automatically when you send. This template applies to every "Send Email" across all customers.</div>
+    <div class="merge-hint">Use <code>{{name}}</code> anywhere below and it'll be swapped for the customer's first name automatically when you send. Use <code>{{from_name}}</code> in your sign-off (e.g. "Thanks, {{from_name}}") and it'll match whoever's picked in "Sending as" — set each account's name below under Gmail Accounts. This template applies to every "Send Email" across all customers.</div>
     <div class="modal-row">
       <div class="modal-label">Default Subject</div>
       <input type="text" class="modal-input" id="settingsSubject">
@@ -1192,9 +1192,16 @@ function renderGmailPoolInSettings(){
   if (!gmailPool.length) { el.innerHTML = '<div class="activity-empty">No Gmail accounts connected yet.</div>'; return; }
   el.innerHTML = gmailPool.map(function(a){
     var isDefault = currentUser && currentUser.default_gmail_email === a.google_email;
+    var savedName = grecSenderNames[a.google_email] || '';
+    var inputId = 'senderName_' + a.google_email.replace(/[^a-zA-Z0-9]/g, '_');
     return '<div class="doc-row"><div class="doc-info">'
       + '<div class="gmail-row-email">'+esc(a.google_email)+'</div>'
       + '<div class="gmail-row-sub">'+esc(a.status)+'</div>'
+      + '<div class="gmail-row-sub" style="margin-top:6px;display:flex;align-items:center;gap:6px;">'
+        + '<span>Sign-off name:</span>'
+        + '<input type="text" class="modal-input" id="'+inputId+'" value="'+esc(savedName)+'" placeholder="e.g. Richard Lay" style="width:170px;padding:4px 8px;font-size:12.5px;">'
+        + '<button class="btn btn-sm" onclick="saveSenderName(\''+esc(a.google_email)+'\', document.getElementById(\''+inputId+'\').value)">Save</button>'
+      + '</div>'
       + '</div><div class="doc-actions">'
       + (isDefault ? '<span class="gmail-default-tag">Your default</span>' : '<button class="btn btn-sm" onclick="setDefaultGmail(\''+esc(a.google_email)+'\')">Set as my default</button>')
       + '</div></div>';
@@ -1252,8 +1259,46 @@ async function loadSettings(){
   // latest setup-grecs-tables.sql hasn't been re-run yet on this project).
   if (!GREC_SETTINGS.grec_contact_email) GREC_SETTINGS.grec_contact_email = 'wade@clearpathrenewables.com';
 }
+
+// google_email -> the human name that should appear in a customer email's
+// sign-off (e.g. "Richard Lay"), so a template can write {{from_name}} once
+// and have it always match whoever's actually sending. Editable per-account
+// from ⚙ Email Template -> Gmail Accounts. Table may not exist yet on a
+// project that hasn't re-run setup-grecs-tables.sql — fails quietly to an
+// empty map, which just means every account falls back to its guessed name.
+var grecSenderNames = {};
+async function loadSenderNames(){
+  try {
+    var r = await sb.from('grec_sender_names').select('*');
+    if (!r.error && r.data) {
+      grecSenderNames = {};
+      r.data.forEach(function(row){ grecSenderNames[row.google_email] = row.display_name; });
+    }
+  } catch (e) { /* table missing on an un-migrated project — fine, falls back per-account */ }
+}
+async function saveSenderName(googleEmail, displayName){
+  displayName = (displayName || '').trim();
+  if (!displayName) return;
+  var r = await sb.from('grec_sender_names').upsert({ google_email: googleEmail, display_name: displayName, updated_at: new Date().toISOString() });
+  if (r.error) { showToast('Could not save sign-off name: ' + r.error.message); return; }
+  grecSenderNames[googleEmail] = displayName;
+  showToast('Sign-off name saved for ' + googleEmail + '.');
+}
+// Best guess at a sign-off name for an account nobody's set one for yet —
+// takes the part of the email before any dot/underscore/plus and
+// capitalizes it (richard.lay@... -> "Richard"), so {{from_name}} is never
+// literally blank even before someone fills in the real full name.
+function guessSenderName(googleEmail){
+  var local = String(googleEmail || '').split('@')[0];
+  var first = local.split(/[._+]/)[0] || local;
+  return first ? first.charAt(0).toUpperCase() + first.slice(1) : 'The NAGeo GRECs Team';
+}
+function resolveFromName(googleEmail){
+  if (!googleEmail) return 'The NAGeo GRECs Team'; // "Open in Gmail manually" — no specific account chosen
+  return grecSenderNames[googleEmail] || guessSenderName(googleEmail);
+}
 function openSettingsModal(){
-  loadGmailPool();
+  loadSenderNames().then(loadGmailPool);
   document.getElementById('settingsGrecEmail').value = GREC_SETTINGS.grec_contact_email || '';
   document.getElementById('settingsSubject').value = GREC_SETTINGS.email_subject || '';
   document.getElementById('settingsBodyEditor').innerHTML = GREC_SETTINGS.email_body_html || '';
@@ -1424,6 +1469,12 @@ async function sendEmail(){
   var subject = document.getElementById('emailSubject').value.trim();
   var bodyHtml = document.getElementById('emailBodyEditor').innerHTML;
   var fromEmail = document.getElementById('emailFromSelect').value;
+  // {{from_name}} resolves at send time (not when the compose box first
+  // populates) so it always matches whichever account is selected right
+  // now, even if the "Sending as" dropdown gets changed after opening.
+  var fromName = resolveFromName(fromEmail);
+  subject = subject.replace(/\{\{\s*from_name\s*\}\}/gi, fromName);
+  bodyHtml = bodyHtml.replace(/\{\{\s*from_name\s*\}\}/gi, esc(fromName));
   if (!to) { showToast('Enter a "To" email address.'); return; }
 
   var btn = document.getElementById('emailSendBtn');
@@ -1484,6 +1535,9 @@ async function sendBatchGrecEmail(){
   var subject = document.getElementById('emailSubject').value.trim();
   var bodyHtml = document.getElementById('emailBodyEditor').innerHTML;
   var fromEmail = document.getElementById('emailFromSelect').value;
+  var fromName = resolveFromName(fromEmail);
+  subject = subject.replace(/\{\{\s*from_name\s*\}\}/gi, fromName);
+  bodyHtml = bodyHtml.replace(/\{\{\s*from_name\s*\}\}/gi, esc(fromName));
   var ids = activeBatchCustomerIds.slice();
   if (!to) { showToast('Enter a "To" email address.'); return; }
   if (!ids.length) { showToast('Nothing selected.'); return; }
@@ -1721,6 +1775,7 @@ async function checkEmailReplyInModal(){
 // ── Boot ──
 initAuth();
 loadSettings();
+loadSenderNames();
 </script>
 </body>
 </html>
