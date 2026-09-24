@@ -288,7 +288,7 @@ button,input,select,textarea{font-family:inherit;}
       <div class="dash-title">GREC Customers</div>
       <div class="dash-search">
         <span class="dash-search-icon">🔍</span>
-        <input type="text" id="dashSearch" placeholder="Search by name or ID…" oninput="renderDashboard()">
+        <input type="text" id="dashSearch" placeholder="Search by name, ID, address, or zip…" oninput="renderDashboard()">
       </div>
       <button class="btn" id="selectModeBtn" onclick="toggleSelectMode()">☑ Select Customers</button>
       <button class="btn" id="printListBtn" onclick="printCustomerList()" title="Print the customers currently shown — respects whatever filters/search/sort are active">🖨 Print List</button>
@@ -806,7 +806,7 @@ function getActiveFilters(){
 // Not Started at the same time.
 function getFilteredCustomerList(filters){
   var list = customers.filter(function(c){
-    if (filters.q && !((c.customer_name||'')+' '+(c.hcp_id||'')).toLowerCase().includes(filters.q)) return false;
+    if (filters.q && !((c.customer_name||'')+' '+(c.hcp_id||'')+' '+(c.address||'')).toLowerCase().includes(filters.q)) return false;
     if (filters.typeFilter && customerType(c) !== filters.typeFilter) return false;
     if (filters.stateFilter && c.state !== filters.stateFilter) return false;
     if (filters.milestoneFilter === 'not_started' && (c.milestone_emailed || c.milestone_called || c.milestone_grec_notified)) return false;
