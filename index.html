@@ -1632,9 +1632,37 @@ async function sendBulkCustomerEmails(){
 // flett_registered_at is already set, specifically so nothing here can
 // accidentally re-trigger that.
 // ══════════════════════════════════════════════════════════
+// Falls back to splitting street/zip out of the combined `address` string
+// when the dedicated street/zip columns are empty (an un-resynced row, or
+// the sync function hasn't been redeployed with the split yet). address was
+// always built as [street, street2, city, state, zip].filter(Boolean).join(', ')
+// — so with city/state already known and reliable, whatever sits between
+// ", {city}, {state}, " and the front of the string is the street, and
+// whatever's after it is the zip.
+function deriveStreetZipFromAddress(c){
+  var addr = (c.address || '').trim();
+  var city = (c.city || '').trim();
+  var state = (c.state || '').trim();
+  if (!addr || !city || !state) return { street: '', zip: '' };
+  var marker = ', ' + city + ', ' + state;
+  var idx = addr.indexOf(marker);
+  if (idx === -1) return { street: '', zip: '' };
+  var street = addr.slice(0, idx).trim();
+  var zip = addr.slice(idx + marker.length).replace(/^,\s*/, '').trim();
+  return { street: street, zip: zip };
+}
+
 async function registerCustomerWithFlett(c){
   if (c.flett_registered_at) return { ok: true, alreadyRegistered: true };
-  if (!c.street || !c.city || !c.state || !c.zip) {
+
+  var street = c.street, zip = c.zip;
+  if (!street || !zip) {
+    var derived = deriveStreetZipFromAddress(c);
+    street = street || derived.street;
+    zip = zip || derived.zip;
+  }
+
+  if (!street || !c.city || !c.state || !zip) {
     return { ok: false, error: 'Missing street/city/state/zip — re-sync from HCP to fill these in before registering with Flett.' };
   }
   if (!c.first_name || !c.last_name) {
@@ -1649,7 +1677,7 @@ async function registerCustomerWithFlett(c){
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
       body: JSON.stringify({ action: 'register', customer: {
         hcpId: c.hcp_id, firstName: c.first_name, lastName: c.last_name,
-        email: c.email, phone: c.phone, street: c.street, city: c.city, state: c.state, zip: c.zip
+        email: c.email, phone: c.phone, street: street, city: c.city, state: c.state, zip: zip
       }})
     });
     var data = await res.json();
