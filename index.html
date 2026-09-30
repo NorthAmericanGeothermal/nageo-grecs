@@ -302,6 +302,7 @@ button,input,select,textarea{font-family:inherit;}
       <button class="btn btn-sm" onclick="toggleSelectMode()">Cancel</button>
       <button class="btn btn-accent btn-sm" id="selectBulkEmailBtn" onclick="openBulkCustomerEmailModal()" disabled>✉ Email Customers (Bulk)</button>
       <button class="btn btn-accent btn-sm" id="selectSendBtn" onclick="openBatchGrecEmailModal()" disabled>✉ Email GREC</button>
+      <button class="btn btn-accent btn-sm" id="selectFlettBtn" onclick="bulkRegisterWithFlett()" disabled title="Registers each selected customer as a facility on Flett Exchange — Flett emails each one directly">📤 Register with Flett</button>
     </div>
 
     <div class="stats-bar">
@@ -539,6 +540,9 @@ var GREC_SYNC_URL = SUPABASE_URL + "/functions/v1/nageo-grecs-hcp-sync";
 // table). See grec-send-email-function.ts for deployment + the one-time
 // gmail.send scope addition it depends on.
 var GREC_SEND_EMAIL_URL = SUPABASE_URL + "/functions/v1/grec-send-email";
+// Flett Exchange's Installer API — see grec-flett-sync-function.ts. Holds
+// their fe_... API key server-side; this app never sees it directly.
+var GREC_FLETT_SYNC_URL = SUPABASE_URL + "/functions/v1/grec-flett-sync";
 var STORAGE_BUCKET = "grec-documents";
 
 // Milestones are three independent toggles now (emailed / GREC notified /
@@ -933,6 +937,8 @@ function renderDashboard(){
     if (sendBtn) sendBtn.disabled = selectedCustomerIds.size === 0;
     var bulkBtn = document.getElementById('selectBulkEmailBtn');
     if (bulkBtn) bulkBtn.disabled = selectedCustomerIds.size === 0;
+    var flettBtn = document.getElementById('selectFlettBtn');
+    if (flettBtn) flettBtn.disabled = selectedCustomerIds.size === 0;
   }
 
   var grid = document.getElementById('customerGrid');
@@ -984,7 +990,7 @@ async function syncFromHcp(){
       return {
         hcp_id: c.hcpId, id_prefix: c.idPrefix, id_number: c.idNumber,
         customer_name: c.name, first_name: c.firstName || null, last_name: c.lastName || null,
-        email: c.email, phone: c.phone, address: c.address, city: c.city || null,
+        email: c.email, phone: c.phone, address: c.address, street: c.street || null, zip: c.zip || null, city: c.city || null,
         state: c.state, customer_type: c.customerType,
         unit_count: (c.unitCount === null || c.unitCount === undefined) ? null : c.unitCount,
         synced_at: new Date().toISOString()
@@ -1063,6 +1069,11 @@ function renderDetail(){
   document.getElementById('detailBadges').innerHTML =
     '<span class="pill '+(customerType(currentCustomer)==='service'?'pill-service':'pill-install')+'">'+esc(customerType(currentCustomer)==='service'?'Service':'Install')+'</span>'
     + '<span class="pill '+(currentCustomer.state==='MD'?'pill-md':'pill-va')+'">'+esc(currentCustomer.state)+'</span>'
+    + (currentCustomer.flett_registered_at
+        ? '<span class="pill pill-units" title="'+esc(currentCustomer.flett_status||'')+'">'
+          + (currentCustomer.flett_facility_url ? '<a href="'+esc(currentCustomer.flett_facility_url)+'" target="_blank" style="color:inherit;">Flett: Registered ↗</a>' : 'Flett: Registered')
+          + '</span>'
+        : '<span class="pill" style="background:rgba(148,163,184,.12);color:var(--text2);">Flett: Not registered</span>')
     + milestoneBadgesHtml(currentCustomer);
 
   document.getElementById('fName').value = currentCustomer.customer_name || '';
@@ -1081,12 +1092,16 @@ function renderDetail(){
 
   document.getElementById('docList').innerHTML = documents.length
     ? documents.map(function(doc){
+        var flettSent = !!doc.flett_transferred_at;
         return '<div class="doc-row">'
           + '<div class="doc-info"><div class="doc-label">📄 '+esc(doc.file_name)+'</div>'
-          + '<div class="doc-file">uploaded'+(doc.uploaded_by ? ' by '+esc(doc.uploaded_by) : '')+(doc.uploaded_at ? ' · '+timeAgo(doc.uploaded_at) : '')+'</div>'
+          + '<div class="doc-file">uploaded'+(doc.uploaded_by ? ' by '+esc(doc.uploaded_by) : '')+(doc.uploaded_at ? ' · '+timeAgo(doc.uploaded_at) : '')+(flettSent ? ' · sent to Flett '+timeAgo(doc.flett_transferred_at) : '')+'</div>'
           + '</div>'
           + '<div class="doc-actions">'
             + '<button class="btn btn-sm" onclick="downloadDoc(\''+doc.id+'\')">Download</button>'
+            + (flettSent
+                ? '<button class="btn btn-sm" disabled title="Already sent to Flett Exchange">✓ Sent to Flett</button>'
+                : '<button class="btn btn-sm" data-flett-doc="'+doc.id+'" onclick="transferDocumentToFlett(\''+doc.id+'\')">→ Flett</button>')
             + '<button class="btn btn-sm btn-danger" onclick="deleteDoc(\''+doc.id+'\')">✕</button>'
           + '</div>'
           + '</div>';
@@ -1602,6 +1617,143 @@ async function sendBulkCustomerEmails(){
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// FLETT EXCHANGE INTEGRATION — registers a customer as a "facility" on
+// Flett Exchange (their GREC aggregator portal) keyed on the same 5-digit
+// hcp_id both sides use, then lets individual documents be sent over to
+// that facility. See grec-flett-sync-function.ts for the actual API calls
+// (it holds the fe_... key server-side) — this is just the app-side glue:
+// calling that function and keeping grec_customers/grec_documents in sync
+// with what happened.
+//
+// IMPORTANT: registerCustomerWithFlett() causes Flett to email the customer
+// directly, the first time it's called for a given hcp_id (see the big
+// comment in grec-flett-sync-function.ts). It's written to be a no-op if
+// flett_registered_at is already set, specifically so nothing here can
+// accidentally re-trigger that.
+// ══════════════════════════════════════════════════════════
+async function registerCustomerWithFlett(c){
+  if (c.flett_registered_at) return { ok: true, alreadyRegistered: true };
+  if (!c.street || !c.city || !c.state || !c.zip) {
+    return { ok: false, error: 'Missing street/city/state/zip — re-sync from HCP to fill these in before registering with Flett.' };
+  }
+  if (!c.first_name || !c.last_name) {
+    return { ok: false, error: 'Missing first/last name — re-sync from HCP to fill these in before registering with Flett.' };
+  }
+  if (!c.email) return { ok: false, error: 'No email on file for this customer.' };
+  if (!c.phone) return { ok: false, error: 'No phone on file for this customer.' };
+
+  try {
+    var res = await fetch(GREC_FLETT_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ action: 'register', customer: {
+        hcpId: c.hcp_id, firstName: c.first_name, lastName: c.last_name,
+        email: c.email, phone: c.phone, street: c.street, city: c.city, state: c.state, zip: c.zip
+      }})
+    });
+    var data = await res.json();
+    if (!res.ok || data.error) return { ok: false, error: data.error || ('HTTP ' + res.status) };
+
+    var facility = data.facility || {};
+    var updates = {
+      flett_registered_at: new Date().toISOString(),
+      flett_status: facility.status || 'pending',
+      flett_facility_url: facility.url || null,
+      updated_at: new Date().toISOString()
+    };
+    var upd = await sb.from('grec_customers').update(updates).eq('id', c.id);
+    if (!upd.error) Object.assign(c, updates);
+
+    await sb.from('grec_activity').insert({
+      customer_id: c.id, type: 'flett_registered',
+      message: 'Registered with Flett Exchange' + (facility.url ? ' (' + facility.url + ')' : ''),
+      created_by: currentUser.name
+    });
+
+    return { ok: true, facility: facility };
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+}
+
+// Per-document transfer — called from a document row's "→ Flett" button.
+// Registers the customer first if they aren't already (per the "auto-
+// register on first document" decision), then uploads this specific file.
+async function transferDocumentToFlett(docId){
+  if (!currentCustomer) return;
+  var doc = (documents || []).find(function(d){ return d.id === docId; });
+  if (!doc) return;
+
+  var btn = document.querySelector('[data-flett-doc="' + docId + '"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  if (!currentCustomer.flett_registered_at) {
+    var regResult = await registerCustomerWithFlett(currentCustomer);
+    if (!regResult.ok) {
+      showToast('Could not register with Flett: ' + regResult.error);
+      if (btn) { btn.disabled = false; btn.textContent = '→ Flett'; }
+      return;
+    }
+    renderDetail();
+  }
+
+  try {
+    var res = await fetch(GREC_FLETT_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
+      body: JSON.stringify({ action: 'upload_document', hcpId: currentCustomer.hcp_id, storagePath: doc.file_path, fileName: doc.file_name })
+    });
+    var data = await res.json();
+    if (!res.ok || data.error) { showToast('Could not send document to Flett: ' + (data.error || ('HTTP ' + res.status))); if (btn) { btn.disabled = false; btn.textContent = '→ Flett'; } return; }
+
+    var updates = { flett_transferred_at: new Date().toISOString(), flett_file_id: (data.file && data.file.id) ? String(data.file.id) : null };
+    var upd = await sb.from('grec_documents').update(updates).eq('id', doc.id);
+    if (!upd.error) Object.assign(doc, updates);
+    renderDetail();
+    showToast('✅ Sent to Flett Exchange.');
+  } catch (e) {
+    showToast('Could not send document to Flett: ' + String(e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = '→ Flett'; }
+  }
+}
+
+// Bulk registration — "📤 Register with Flett" in the select-bar. Unlike
+// bulk email, there's no template to review first: this just sends each
+// selected customer's core info over as-is. Skips anyone already
+// registered (no-op) and anyone missing a required field, reporting both
+// counts so nothing fails silently.
+async function bulkRegisterWithFlett(){
+  if (!selectedCustomerIds.size) { showToast('Select at least one customer tile first.'); return; }
+  var list = customers.filter(function(c){ return selectedCustomerIds.has(c.id); });
+  var alreadyDone = list.filter(function(c){ return !!c.flett_registered_at; }).length;
+  var toRegister = list.filter(function(c){ return !c.flett_registered_at; });
+
+  if (!toRegister.length) { showToast('All selected customers are already registered with Flett.'); return; }
+
+  if (!confirm('Register ' + toRegister.length + ' customer' + (toRegister.length===1?'':'s') + ' with Flett Exchange now? '
+    + 'Flett emails each customer directly as part of registering them — this cannot be undone.'
+    + (alreadyDone ? ' (' + alreadyDone + ' already registered will be skipped.)' : ''))) return;
+
+  var succeeded = 0, skipped = [], failed = [];
+  for (var i = 0; i < toRegister.length; i++) {
+    var c = toRegister[i];
+    var result = await registerCustomerWithFlett(c);
+    if (result.ok) succeeded++;
+    else failed.push({ name: c.customer_name || c.hcp_id, error: result.error });
+    await sleepMs(200);
+  }
+
+  renderDashboard();
+  if (failed.length) {
+    showToast(succeeded + ' registered, ' + failed.length + ' failed — ' +
+      failed.slice(0, 5).map(function (f) { return esc(f.name) + ': ' + esc(f.error); }).join('; ') +
+      (failed.length > 5 ? '…' : ''));
+  } else {
+    showToast('✅ Registered ' + succeeded + ' customer' + (succeeded === 1 ? '' : 's') + ' with Flett Exchange.');
+  }
+}
+
 async function openEmailModal(mode){
   if (!currentCustomer) return;
   activeEmailMode = mode || 'customer';
@@ -1795,7 +1947,7 @@ function renderActivity(){
   if (!el) return;
   if (!activity.length) { el.innerHTML = '<div class="activity-empty">No activity yet.</div>'; return; }
   el.innerHTML = activity.map(function(a){
-    var label = a.type==='email_sent' ? 'Email sent: ' : a.type==='email_grec_notified' ? 'GREC notified: ' : '';
+    var label = a.type==='email_sent' ? 'Email sent: ' : a.type==='email_grec_notified' ? 'GREC notified: ' : a.type==='flett_registered' ? '📤 ' : '';
     var isEmailType = a.type==='email_sent' || a.type==='email_grec_notified';
     var replyBadge = '';
     if (a.reply_status === 'replied') {
