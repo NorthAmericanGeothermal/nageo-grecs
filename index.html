@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -359,6 +359,7 @@ button,input,select,textarea{font-family:inherit;}
       <div class="detail-actions">
         <button class="btn btn-accent btn-sm" onclick="openEmailModal('customer')">✉ Send Email</button>
         <button class="btn btn-accent btn-sm" onclick="openEmailModal('grec')" style="background:var(--green-deep);">✉ Email GREC</button>
+        <button class="btn btn-sm" id="detailFlettBtn" onclick="registerCurrentCustomerWithFlett()">📤 Register with Flett</button>
       </div>
     </div>
 
@@ -1073,7 +1074,7 @@ function renderDetail(){
         ? '<span class="pill pill-units" title="'+esc(currentCustomer.flett_status||'')+'">'
           + (currentCustomer.flett_facility_url ? '<a href="'+esc(currentCustomer.flett_facility_url)+'" target="_blank" style="color:inherit;">Flett: Registered ↗</a>' : 'Flett: Registered')
           + '</span>'
-        : '<span class="pill" style="background:rgba(148,163,184,.12);color:var(--text2);">Flett: Not registered</span>')
+        : '<span class="pill" style="background:rgba(148,163,184,.12);color:var(--text-dim);">Flett: Not registered</span>')
     + milestoneBadgesHtml(currentCustomer);
 
   document.getElementById('fName').value = currentCustomer.customer_name || '';
@@ -1082,7 +1083,7 @@ function renderDetail(){
   document.getElementById('fPhone').value = currentCustomer.phone || '';
   document.getElementById('fAddress').value = currentCustomer.address || '';
 
-  var noneSet = !currentCustomer.milestone_emailed && !currentCustomer.milestone_called;
+  var noneSet = !currentCustomer.milestone_emailed && !currentCustomer.milestone_called && !currentCustomer.milestone_grec_notified;
   document.getElementById('milestoneSteps').innerHTML =
     '<div class="milestone-step notstarted'+(noneSet?' current':'')+'">Not Started</div>'
     + MILESTONE_TOGGLES.map(function(m){
@@ -1107,6 +1108,22 @@ function renderDetail(){
           + '</div>';
       }).join('')
     : '<div class="doc-empty">No documents uploaded yet.</div>';
+
+  // "📤 Register with Flett" button in the profile header — greys out once
+  // this customer is registered, so Flett's customer email can't be
+  // triggered twice from here.
+  var flettBtn = document.getElementById('detailFlettBtn');
+  if (flettBtn) {
+    if (currentCustomer.flett_registered_at) {
+      flettBtn.disabled = true;
+      flettBtn.textContent = '✓ Registered with Flett';
+      flettBtn.title = 'Registered ' + timeAgo(currentCustomer.flett_registered_at);
+    } else {
+      flettBtn.disabled = false;
+      flettBtn.textContent = '📤 Register with Flett';
+      flettBtn.title = 'Flett emails the customer directly when they are registered';
+    }
+  }
 }
 
 async function toggleMilestone(field){
@@ -1652,6 +1669,40 @@ function deriveStreetZipFromAddress(c){
   return { street: street, zip: zip };
 }
 
+// Splits a single HCP "Customer Name" into the first/last pair Flett needs.
+//   "Richard Lay"          -> Richard / Lay
+//   "Jill & Rick FINDLAY"  -> Jill & Rick / FINDLAY
+//   "Lay, Richard"         -> Richard / Lay
+//   "John Smith Jr."       -> John / Smith Jr.
+// A single word (e.g. a company with no contact name) returns no last name,
+// which registerCustomerWithFlett reports so it can be fixed on the profile.
+function splitCustomerName(full){
+  var name = String(full || '').replace(/\s+/g, ' ').trim();
+  if (!name) return { first: '', last: '' };
+  if (name.indexOf(',') !== -1) {
+    var bits = name.split(',');
+    var lastPart = bits[0].trim();
+    var firstPart = bits.slice(1).join(',').trim();
+    if (firstPart && lastPart) return { first: firstPart, last: lastPart };
+  }
+  var parts = name.split(' ');
+  if (parts.length < 2) return { first: name, last: '' };
+  var suffixes = /^(jr|sr|ii|iii|iv)\.?$/i;
+  var lastWords = 1;
+  if (parts.length > 2 && suffixes.test(parts[parts.length - 1])) lastWords = 2;
+  return {
+    first: parts.slice(0, parts.length - lastWords).join(' '),
+    last: parts.slice(parts.length - lastWords).join(' ')
+  };
+}
+// "FINDLAY" -> "Findlay", "O'BRIEN" -> "O'Brien", "SMITH-JONES" -> "Smith-Jones".
+// Leaves normally-cased names ("McDonald", "Richard") untouched.
+function fixAllCapsName(s){
+  return String(s || '').trim().replace(/[A-Z]{2,}/g, function(w){
+    return w.charAt(0) + w.slice(1).toLowerCase();
+  });
+}
+
 async function registerCustomerWithFlett(c){
   if (c.flett_registered_at) return { ok: true, alreadyRegistered: true };
 
@@ -1665,8 +1716,20 @@ async function registerCustomerWithFlett(c){
   if (!street || !c.city || !c.state || !zip) {
     return { ok: false, error: 'Missing street/city/state/zip — re-sync from HCP to fill these in before registering with Flett.' };
   }
-  if (!c.first_name || !c.last_name) {
-    return { ok: false, error: 'Missing first/last name — re-sync from HCP to fill these in before registering with Flett.' };
+  // HCP often has no separate first/last name (or has them blank), so fall
+  // back to splitting the full Customer Name, which Flett requires as two
+  // fields. All-caps names from HCP get tidied ("FINDLAY" -> "Findlay")
+  // because Flett uses these in the emails it sends the owner.
+  var firstName = c.first_name, lastName = c.last_name;
+  if (!firstName || !lastName) {
+    var split = splitCustomerName(c.customer_name);
+    firstName = firstName || split.first;
+    lastName = lastName || split.last;
+  }
+  firstName = fixAllCapsName(firstName);
+  lastName = fixAllCapsName(lastName);
+  if (!firstName || !lastName) {
+    return { ok: false, error: 'Couldn\'t tell first and last name apart in "' + (c.customer_name || '') + '" — edit Customer Name on their profile to "First Last" and try again.' };
   }
   if (!c.email) return { ok: false, error: 'No email on file for this customer.' };
   if (!c.phone) return { ok: false, error: 'No phone on file for this customer.' };
@@ -1676,7 +1739,7 @@ async function registerCustomerWithFlett(c){
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPABASE_KEY, 'apikey': SUPABASE_KEY },
       body: JSON.stringify({ action: 'register', customer: {
-        hcpId: c.hcp_id, firstName: c.first_name, lastName: c.last_name,
+        hcpId: c.hcp_id, firstName: firstName, lastName: lastName,
         email: c.email, phone: c.phone, street: street, city: c.city, state: c.state, zip: zip
       }})
     });
@@ -1688,6 +1751,8 @@ async function registerCustomerWithFlett(c){
       flett_registered_at: new Date().toISOString(),
       flett_status: facility.status || 'pending',
       flett_facility_url: facility.url || null,
+      first_name: firstName,
+      last_name: lastName,
       updated_at: new Date().toISOString()
     };
     var upd = await sb.from('grec_customers').update(updates).eq('id', c.id);
@@ -1780,6 +1845,30 @@ async function bulkRegisterWithFlett(){
   } else {
     showToast('✅ Registered ' + succeeded + ' customer' + (succeeded === 1 ? '' : 's') + ' with Flett Exchange.');
   }
+}
+
+// Single-customer registration — the "📤 Register with Flett" button on a
+// customer's profile page. Same registerCustomerWithFlett() call the bulk
+// and per-document flows use; this just adds the confirm prompt and
+// refreshes the profile (badge, button, activity feed) afterwards.
+async function registerCurrentCustomerWithFlett(){
+  if (!currentCustomer || currentCustomer.flett_registered_at) return;
+  if (!confirm('Register ' + (currentCustomer.customer_name || 'this customer') + ' with Flett Exchange? '
+    + 'Flett emails the customer directly as part of registering them — this cannot be undone.')) return;
+
+  var btn = document.getElementById('detailFlettBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Registering…'; }
+
+  var result = await registerCustomerWithFlett(currentCustomer);
+  if (!result.ok) {
+    showToast('Could not register with Flett: ' + result.error);
+    renderDetail();
+    return;
+  }
+  await loadActivity();
+  renderActivity();
+  renderDetail();
+  showToast('✅ Registered with Flett Exchange.');
 }
 
 async function openEmailModal(mode){
